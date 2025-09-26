@@ -62,9 +62,8 @@ class BatteryEnvSingle(gym.Env):
         # 动作/观测空间
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
         self.observation_space = spaces.Box(
-            low=np.array([0.0, 0.0, -10.0, self.soc_min, -1.0, -1.0,-1e6], dtype=np.float32),
-            high=np.array([2.0, 2.0, 10000.0, self.soc_max, 1.0, 1.0,1e6], dtype=np.float32)
-        )
+            low=np.array([0.0, 0.0, -10.0, self.soc_min, -1.0, -1.0, 0.0, -1.0], dtype=np.float32),
+            high=np.array([2.0, 2.0, 10000.0, self.soc_max, 1.0, 1.0, 1e6, 1.0], dtype=np.float32)        )
 
     # 由协调器调用，注入本步外生量和（可选）归一化尺度
     def set_exogenous(self, L, R, P, sin_h, cos_h, L_scale=1.0, R_scale=1.0, P_scale=1.0):
@@ -74,12 +73,20 @@ class BatteryEnvSingle(gym.Env):
         self._R_scale = max(1e-6, float(R_scale))
         self._P_scale = max(1e-6, float(P_scale))
 
-    def _make_obs(self,elec_cost:float = 0.0):
+    def _make_obs(self, market_price: float = 0.0, market_direction: float = 0.0):
         L = self._exog["L"] / self._L_scale if self.obs_norm else self._exog["L"]
         R = self._exog["R"] / self._R_scale if self.obs_norm else self._exog["R"]
         P = self._exog["P"] / self._P_scale if self.obs_norm else self._exog["P"]
-        return np.array([L, R, P, self._soc, self._exog["sin_h"], self._exog["cos_h"],float(elec_cost)],
-                        dtype=np.float32)
+        return np.array([
+            L,
+            R,
+            P,
+            self._soc,
+            self._exog["sin_h"],
+            self._exog["cos_h"],
+            float(max(0.0, market_price)),
+            float(np.clip(market_direction, -1.0, 1.0))
+        ], dtype=np.float32)
 
     def reset(self, seed=None):
         super().reset(seed=seed)
@@ -88,7 +95,7 @@ class BatteryEnvSingle(gym.Env):
         self._t = 0
         self._soc = float(np.clip(self.soc_init, self.soc_min, self.soc_max))
         # 注意：协调器会在 reset 之后立刻 set_exogenous(t=0) 再读取观测
-        return self._make_obs(0.0), {}
+        return self._make_obs(0.0, 0.0), {}
 
     def step(self, action: np.ndarray):
         # 读取当步外生量（由协调器注入）
@@ -260,7 +267,7 @@ class MultiBatteryCoordinator(gym.Env):
             env.reset(seed=(None if seed is None else (seed + hash(aid) % 9973)))
         self._inject_exogenous_to_all(self.t)
         for aid, env in self.envs.items():
-            obs[aid] = env._make_obs(elec_cost=0.0)
+            obs[aid] = env._make_obs(0.0, 0.0)
         return obs, {}
 
     def step(self, actions: Dict[str, np.ndarray]):
@@ -338,6 +345,15 @@ class MultiBatteryCoordinator(gym.Env):
             market_sell_MWh = tmp[aid]["sell_MWh"]
             market_cash = tmp[aid]["cash_trade"]  # 卖家为收入（正），买家为支出（正）
 
+            avg_price = 0.0
+            market_direction = 0.0
+            if market_buy_MWh > 1e-6:
+                avg_price = market_cash / max(1e-6, market_buy_MWh)
+                market_direction = 1.0
+            elif market_sell_MWh > 1e-6:
+                avg_price = market_cash / max(1e-6, market_sell_MWh)
+                market_direction = -1.0
+
             # 外网补足（只有买家有）
             demand_MW = float(inf.get("demand_MW", max(0.0, net)))
             trade_buy_MW = market_buy_MWh / max(1e-9, dt_h)
@@ -364,10 +380,12 @@ class MultiBatteryCoordinator(gym.Env):
             ii = dict(inf)
             ii.update({
                 "elec_cost": elec_cost,
-                "p_grid_buy": p_grid_buy,
+                "p_grid_buy": grid_cost,
                 "market_buy_MWh": market_buy_MWh,
                 "market_sell_MWh": market_sell_MWh,
                 "market_cashflow": market_cash,  # 卖家为 +收入；买家为 +支出
+                "market_average_price": avg_price,
+                "market_direction": market_direction,
                 "grid_buy_MWh": grid_buy_MW * dt_h,
                 "surplus_dump_MWh": surplus_MW * dt_h,
                 "total_cost": total_cost
@@ -381,14 +399,20 @@ class MultiBatteryCoordinator(gym.Env):
         if self.t < self.T:
             self._inject_exogenous_to_all(self.t)
             for aid, env in self.envs.items():
-                if infos[aid]["market_buy_MWh"] > 1e-6:
-                    market_MWh = -infos[aid]["market_buy_MWh"]
-                elif infos[aid]["market_sell_MWh"] > 1e-6:
-                    market_MWh = infos[aid]["market_sell_MWh"]
-                else :
-                    market_MWh = 1e9
+                market_buy = float(infos[aid]["market_buy_MWh"])
+                market_sell = float(infos[aid]["market_sell_MWh"])
+                market_cash = float(infos[aid]["market_cashflow"])
 
-                obs[aid]= env._make_obs(infos[aid]["market_cashflow"]/market_MWh)
+                avg_price = 0.0
+                market_direction = 0.0
+                if market_buy > 1e-6:
+                    avg_price = market_cash / max(1e-6, market_buy)
+                    market_direction = 1.0
+                elif market_sell > 1e-6:
+                    avg_price = market_cash / max(1e-6, market_sell)
+                    market_direction = -1.0
+
+                obs[aid] = env._make_obs(avg_price, market_direction)
 
         else:
             obs = obs_tmp  # 已经到末尾，随便给占位即可

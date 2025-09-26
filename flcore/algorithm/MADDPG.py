@@ -107,7 +107,12 @@ class MADDPG:
             a = self.actors[i](s).detach().cpu().numpy().flatten()
             if noise_scale > 0:
                 a = a + np.random.normal(0, noise_scale, size=a.shape)
-            a = np.clip(a, -1, 1)
+            max_bound = self.max_actions[i]
+            if np.isscalar(max_bound):
+                a = np.clip(a, -max_bound, max_bound)
+            else:
+                max_arr = np.asarray(max_bound, dtype=np.float32)
+                a = np.clip(a, -max_arr, max_arr)
             actions.append(a.astype(np.float32))
         return actions
 
