@@ -23,7 +23,7 @@ def draw_result(rewards_record):
 
 if __name__ == "__main__":
     #train_maddpg(episodes=5000, max_steps=100, render=False)
-    re,test_re = train_maddpg(episodes=100, max_steps= 24 * 7 *4 )
+    re,test_re = train_maddpg(episodes=100, max_steps= 24 *7 )
     re = np.array(re)
     re =re.T
     #test_re = np.array(test_re)

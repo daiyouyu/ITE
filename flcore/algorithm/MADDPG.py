@@ -99,7 +99,7 @@ class MADDPG:
         self.tau = tau
         self.batch_size = batch_size
 
-    def select_actions(self, obs_list, noise_scale=0.0):
+    def select_actions(self, obs_list, noise_scale=0.1):
         """obs_list: list of per-agent observations (numpy)"""
         actions = []
         for i, obs in enumerate(obs_list):

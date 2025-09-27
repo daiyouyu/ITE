@@ -112,7 +112,11 @@ def train_maddpg(episodes=2000, max_steps=50, render=False):
         for step in range(max_steps):
             # 4) 观测 -> 动作（按固定顺序）
             obs_list = list_by_agents(obs, agents)
-            actions_list = maddpg.select_actions(obs_list, noise_scale=0.02)
+            if step < 24 * 2 :
+                actions_list = [env.action_spaces[a].sample() for a in agents]
+            else:
+                noise_scale = 0.3 * (1-step/max_steps)
+                actions_list = maddpg.select_actions(obs_list, noise_scale = noise_scale)
             # 构造 action 字典（一次性 step）
             action_dict = {a: actions_list[i] for i, a in enumerate(agents)}
 
@@ -130,8 +134,9 @@ def train_maddpg(episodes=2000, max_steps=50, render=False):
                     f"电池：{i0['p_bat']:.3f},"
                     f"锅炉:{i0['bioler_gen']:.3f},"
                     f"锅炉耗费：{i0['cost_gen']:.3f},\n"
-                    f"电网：{i0['net_power_MW']:.3f},"
-                    f"电网耗费{i0['elec_cost']:.3f},"
+                    f"市场交易:{i0['market_cashflow']:.3f},"
+                    f"电网：{i0['grid_buy_MWh']:.3f},"
+                    f"电网耗费{i0['p_grid_buy']:.3f},"
                 )
 
             # 6) 组织经验（把 dict -> list，合成 joint）
@@ -196,7 +201,7 @@ def train_maddpg(episodes=2000, max_steps=50, render=False):
         rewards_record.append(ep_rewards.sum())
         rewards.append(ep_rewards)
         #test_rewards.append(test_ep_rewards)
-        print(format_episode_info(ep, ep_rewards, ep_info[1]))
+        print(format_episode_info(ep, ep_rewards, ep_info[0]))
         # lines = []
         # for test_ep in test_ep_rewards:
         #     lines.append(f"test_Reward: {test_ep:.3f},")

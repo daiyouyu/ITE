@@ -160,6 +160,7 @@ class BatteryEnvSingle(gym.Env):
         p_dis = max(0.0, p_bat)  # 电池放电功率
         gen = max(0.0, p_gen)  # 锅炉出力
         R_gen = max(0.0, R)
+        R_cost = max(0.0, R_gen * 9.5)
         denom = max(1e-9, p_dis + gen + R_gen)
 
         a_sell = float(np.clip(action[3], -1.0, 1.0))
@@ -172,7 +173,7 @@ class BatteryEnvSingle(gym.Env):
             ask_price = None
         else:
             # 单位成本：$/MWh，防爆夹紧（也可用 P 的区间）
-            unit_cost = (cost_deg + cost_gen + 5) / max(1e-3, denom)
+            unit_cost = (cost_deg + cost_gen + R_cost ) / max(1e-3, denom)
             markup = 1.0 + 0.5 * (a_sell + 1.0) / 2.0  # 1.0~1.5
             ask_price = float(np.clip(unit_cost * markup, 0.2 * P, 5.0 * P))
 
