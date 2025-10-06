@@ -2,6 +2,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 #导入算法
 from flcore.train.train_ddpg import train_ddpg
+from flcore.train.train_iddpg import train_iddpg
 from flcore.train.train_maddpg import train_maddpg
 
 def draw_result(rewards_record):
@@ -23,7 +24,7 @@ def draw_result(rewards_record):
 
 if __name__ == "__main__":
     #train_maddpg(episodes=5000, max_steps=100, render=False)
-    re,test_re = train_maddpg(episodes=100, max_steps= 24 *7 )
+    re,test_re = train_iddpg(episodes=2000, max_steps= 24 * 365 *4 )
     re = np.array(re)
     re =re.T
     #test_re = np.array(test_re)

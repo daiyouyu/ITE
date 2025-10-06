@@ -23,7 +23,7 @@ class BatteryEnvSingle(gym.Env):
                  episode_len=24,          # 由协调器传全局长度
                  obs_norm=True,           # 仍保留，便于后续扩展
                  # 锅炉/发电
-                 Fbmax=10000.0, LHV=25000.0, cco2=0.01,
+                 Fbmax=5000.0, LHV=25000.0, cco2=0.01,
                  cf=30.7, gf=0.8325,
                  seed: int | None = None,
                  ):
@@ -73,7 +73,7 @@ class BatteryEnvSingle(gym.Env):
         self._R_scale = max(1e-6, float(R_scale))
         self._P_scale = max(1e-6, float(P_scale))
 
-    def _make_obs(self, market_price: float = 0.0, market_direction: float = 0.0):
+    def _make_obs(self, market_price: float = 0.0, market_MWH: float = 0.0):
         L = self._exog["L"] / self._L_scale if self.obs_norm else self._exog["L"]
         R = self._exog["R"] / self._R_scale if self.obs_norm else self._exog["R"]
         P = self._exog["P"] / self._P_scale if self.obs_norm else self._exog["P"]
@@ -84,8 +84,8 @@ class BatteryEnvSingle(gym.Env):
             self._soc,
             self._exog["sin_h"],
             self._exog["cos_h"],
-            float(max(0.0, market_price)),
-            float(np.clip(market_direction, -1.0, 1.0))
+            float(market_price),
+            float(market_MWH)
         ], dtype=np.float32)
 
     def reset(self, seed=None):
@@ -110,25 +110,15 @@ class BatteryEnvSingle(gym.Env):
         p_dis_feasible_max = max(0.0, (soc - self.soc_min) * self.E * self.eta_dis / self.dt)
         p_chg_feasible_max = max(0.0, (self.soc_max - soc) * self.E / (self.eta_ch * self.dt))
         lb_soc = -min(self.Pmax, p_chg_feasible_max)
-        ub_soc =  min(self.Pmax, p_dis_feasible_max)
+        ub_soc = min(self.Pmax, p_dis_feasible_max)
         p_bat = float(np.clip(p_bat_raw, lb_soc, ub_soc))
 
-        # 2) 锅炉两台（用动作[1],[2]）
-        bfw_1 = float(np.clip(action[1], -1.0, 1.0))
-        bfw_2 = float(np.clip(action[2], -1.0, 1.0))
-        fuel1_kgph, p_gen1 = self._boiler_block(bfw_1)
-        fuel2_kgph, p_gen2 = self._boiler_block(bfw_2)
-        fuel_kgph = fuel1_kgph + fuel2_kgph
-        p_gen = p_gen1 + p_gen2
-
-        # 3) SOC 更新 & 净功率（>0 表示净购电；<0 表示可售）
+        # SOC 更新 & 净功率（>0 表示净购电；<0 表示可售）
         if p_bat < 0:  # 充电
             delta_soc = (self.eta_ch * (-p_bat) * self.dt) / self.E
-        else:          # 放电
+        else:  # 放电
             delta_soc = -((p_bat) * self.dt / self.E) / self.eta_dis
         soc_next = soc + delta_soc
-
-        net_power = L - R - p_bat - p_gen   # MW（不裁零，留给市场清算层处理）
 
         # SOC 裁剪与软罚
         over = 0.0
@@ -138,6 +128,18 @@ class BatteryEnvSingle(gym.Env):
         elif soc_next > self.soc_max:
             over = soc_next - self.soc_max
             soc_next = self.soc_max
+
+
+        # 2) 锅炉两台（用动作[1],[2]）
+        bfw_1 = float(np.clip(action[1], -1.0, 1.0))
+        bfw_2 = float(np.clip(action[2], -1.0, 1.0))
+        fuel1_kgph, p_gen1 = self._boiler_block(bfw_1)
+        fuel2_kgph, p_gen2 = self._boiler_block(bfw_2)
+        fuel_kgph = fuel1_kgph + fuel2_kgph
+        p_gen = p_gen1 + p_gen2
+
+        #电力结算
+        net_power = L - R - p_bat - p_gen   # MW（不裁零，留给市场清算层处理）
 
         # 4) 本地成本（不含购售电；电费由协调器做市场结算）
         cost_deg  = self.deg_c * abs(p_bat)           # 折旧
@@ -160,7 +162,7 @@ class BatteryEnvSingle(gym.Env):
         p_dis = max(0.0, p_bat)  # 电池放电功率
         gen = max(0.0, p_gen)  # 锅炉出力
         R_gen = max(0.0, R)
-        R_cost = max(0.0, R_gen * 9.5)
+        R_cost = max(0.0, R_gen * 5)
         denom = max(1e-9, p_dis + gen + R_gen)
 
         a_sell = float(np.clip(action[3], -1.0, 1.0))
@@ -175,13 +177,13 @@ class BatteryEnvSingle(gym.Env):
             # 单位成本：$/MWh，防爆夹紧（也可用 P 的区间）
             unit_cost = (cost_deg + cost_gen + R_cost ) / max(1e-3, denom)
             markup = 1.0 + 0.5 * (a_sell + 1.0) / 2.0  # 1.0~1.5
-            ask_price = float(np.clip(unit_cost * markup, 0.2 * P, 5.0 * P))
+            ask_price = float(np.clip(unit_cost * markup, 0.2 * P, 1.5 * P))
 
         if demand_MW <= 1e-6 :
             need_price = None# 外部电网价格（$/MWh），作为保底补足价
         else :
             markup = 0.8 * (a_buy + 1.0) / 2.0
-            need_price = float(np.clip(P * markup, 0.2 * P, P))
+            need_price = float(np.clip(P * markup, 0.0, P))
 
         obs_next = self._make_obs()
         info = {
@@ -366,7 +368,7 @@ class MultiBatteryCoordinator(gym.Env):
             trade_sell_MW = market_sell_MWh / max(1e-9, dt_h)
             surplus_MW = max(0.0, offer_MW - trade_sell_MW)
             # 废电惩罚
-            surplus_cost = surplus_MW * p_grid_buy * 0.5 * dt_h
+            surplus_cost = surplus_MW * p_grid_buy * 0.0 * dt_h
             # 费用口径：支出为正、收入为负
             # - 买家：elec_cost = grid_cost + market_cash（支出）
             # - 卖家：elec_cost = - market_cash（收入记负）
@@ -405,15 +407,15 @@ class MultiBatteryCoordinator(gym.Env):
                 market_cash = float(infos[aid]["market_cashflow"])
 
                 avg_price = 0.0
-                market_direction = 0.0
+                market_MWH = 0.0
                 if market_buy > 1e-6:
-                    avg_price = market_cash / max(1e-6, market_buy)
-                    market_direction = 1.0
+                    avg_price  = -market_cash / max(1e-6, market_buy)
+                    market_MWH = -market_buy
                 elif market_sell > 1e-6:
-                    avg_price = market_cash / max(1e-6, market_sell)
-                    market_direction = -1.0
+                    avg_price  = +market_cash / max(1e-6, market_sell)
+                    market_MWH = market_sell
 
-                obs[aid] = env._make_obs(avg_price, market_direction)
+                obs[aid] = env._make_obs(avg_price, market_MWH)
 
         else:
             obs = obs_tmp  # 已经到末尾，随便给占位即可

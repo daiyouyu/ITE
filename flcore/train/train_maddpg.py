@@ -27,8 +27,8 @@ def train_maddpg(episodes=2000, max_steps=50, render=False):
     # 假设数据是 dict[str, np.ndarray]，每个字段按时间序列存储
     T = len(data[0]["P"])  # 总时长
     days = T // 24  # 小时转天数（前提：dt_hours=1）
-    train_days = 7 * 3
-    test_days = 7 * 1
+    train_days = 2 * 1
+    test_days = 1 * 1
 
     train_idx = train_days * 24
     test_idx = (train_days + test_days) * 24
@@ -112,10 +112,10 @@ def train_maddpg(episodes=2000, max_steps=50, render=False):
         for step in range(max_steps):
             # 4) 观测 -> 动作（按固定顺序）
             obs_list = list_by_agents(obs, agents)
-            if step < 24 * 2 :
+            if step < 24 * 7:
                 actions_list = [env.action_spaces[a].sample() for a in agents]
             else:
-                noise_scale = 0.3 * (1-step/max_steps)
+                noise_scale = 0.3 * (1 - step/max_steps)
                 actions_list = maddpg.select_actions(obs_list, noise_scale = noise_scale)
             # 构造 action 字典（一次性 step）
             action_dict = {a: actions_list[i] for i, a in enumerate(agents)}
@@ -152,8 +152,10 @@ def train_maddpg(episodes=2000, max_steps=50, render=False):
             joint_actions = flatten_actions(actions_list)
             joint_next_obs = flatten_obs(next_obs_list)
 
+
             maddpg.replay.add(joint_obs, joint_actions, rew_list, joint_next_obs, done_list)
-            maddpg.update()   # 如果你有联邦聚合，放在合适频次调用
+            if step % 3 == 0 :
+                maddpg.update()   # 如果你有联邦聚合，放在合适频次调用
 
             # 累计奖励/信息
             obs = next_obs
