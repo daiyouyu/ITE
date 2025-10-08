@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import numpy as np
+import time
 from flcore.Env.multi_env import MultiBatteryCoordinator
 from data.load_data import load_power_data
 from flcore.algorithm.IDDPG import IDDPG
@@ -17,7 +18,7 @@ def train_iddpg(episodes=1000, max_steps=24*7, render=False,
     # === 数据切分（与 train_maddpg 同风格）===
     data = load_power_data("./data/GridSet_no_pred.csv", price_mode="mean")
     T = len(data[0]["P"])
-    train_days, test_days = 7, 1
+    train_days, test_days = 31 * 6, 1
     train_idx = train_days * 24
     test_idx = (train_days + test_days) * 24
 
@@ -67,6 +68,7 @@ def train_iddpg(episodes=1000, max_steps=24*7, render=False,
     test_rewards = []
 
     for ep in range(episodes):
+        start_time = time.time()
         obs, _ = env.reset()
         ep_rew = np.zeros(len(agents), dtype=np.float32)
 
@@ -128,7 +130,9 @@ def train_iddpg(episodes=1000, max_steps=24*7, render=False,
                 break
 
         rewards.append(ep_rew)
-        #
+        end_time = time.time()
+        ep_time = (end_time - start_time) / 60
+        print(f"当前轮次时间: {ep_time:.3f}分钟，预计剩余时间{ep_time * (episodes - ep):.3f}分钟")
         print(format_episode_info(ep, ep_rew, ep_info[0]))
 
         # ===== 可选：测试评估（不入缓存、不加噪声）=====
