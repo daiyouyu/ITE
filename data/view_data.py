@@ -29,10 +29,10 @@ P = df[lz_cols].astype(float).values  # 电价数据
 new_col = ['WIND_ACTUAL_SYSTEM_WIDE','SOLAR_ACTUAL_SYSTEM_WIDE']
 R = df[new_col].astype(float).values  # 新能源发电量
 date_series = df['date'].values  # 时间序列
-L = L[0:24*31,:]
-P = P[0:24*31,:]
-R = R[0:24*31,:]
-date_series = date_series[0:24*31]
+L = L[1000:1000+24,:]
+P = P[1000:1000+24,:]
+R = R[1000:1000+24,:]
+date_series = date_series[1000:1000+24]
 
 # 2. 绘制八个地区的电价图
 plt.figure(figsize=(16, 12))

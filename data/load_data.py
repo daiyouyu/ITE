@@ -10,13 +10,16 @@ def load_power_data(csv_path: str,
     df = df.sort_values('date').reset_index(drop=True)
 
     # 负荷 (系统级): 8个分区之和
-    load_cols = ['COAST','EAST','FWEST','NORTH','NCENT','SOUTH','SCENT','WEST']
+    load_cols = ['WEST','SOUTH','EAST','FWEST','SCENT','NORTH','NCENT','COAST']
     #load_cols = ['COAST',  'NCENT', 'SOUTH', 'WEST']
     L = df[load_cols].astype(float).values  # MW
     # 可再生 (系统级): 风 + 光
-    R = (df['WIND_ACTUAL_SYSTEM_WIDE'].astype(float).values +
-         df['SOLAR_ACTUAL_SYSTEM_WIDE'].astype(float).values)  # MW
-    R = [R * 0.4, R * 0.15, R * 0.3 ,R * 0.15]
+    R_wind  = df['WIND_ACTUAL_SYSTEM_WIDE'].astype(float).values
+    R_solar = df['SOLAR_ACTUAL_SYSTEM_WIDE'].astype(float).values  # MW
+    R = [R_wind * 0.25  + R_solar * 0.9,
+         R_wind * 0.25 + R_solar * 0,
+         R_wind * 0.25  + R_solar * 0.9,
+         R_wind * 0.25 + R_solar * 0,]
     #R = [R * 0.3, R * 0.3, R * 0.05, R * 0.1, R * 0.1,R * 0.1,R *0.1,R* 0.1]
     # 电价：均值或指定LZ_*列
     lz_cols = ['LZ_AEN','LZ_CPS','LZ_HOUSTON','LZ_LCRA','LZ_NORTH','LZ_RAYBN','LZ_SOUTH','LZ_WEST']
@@ -31,9 +34,9 @@ def load_power_data(csv_path: str,
     for i in range(4):
         data.append({
             'datetime': df['date'].values,
-            'L': L[:,i*2:(i+1)*2].sum(axis=1),
-            'R': R[i],
-            'P': P[:,i*2:(i+1)*2].sum(axis=1),
+            'L': L[:,i],
+            'R': R[i]*0.5,
+            'P': P[:,i],
             'sin_h': sin_h,
             'cos_h': cos_h
         })

@@ -24,7 +24,7 @@ def draw_result(rewards_record):
 
 if __name__ == "__main__":
     #train_maddpg(episodes=5000, max_steps=100, render=False)
-    re,test_re = train_iddpg(episodes=1000, max_steps= 24 * 365 *4 )
+    re,test_re = train_iddpg(episodes=300,train = 7 , test = 1 )
     re = np.array(re)
     re =re.T
     #test_re = np.array(test_re)
