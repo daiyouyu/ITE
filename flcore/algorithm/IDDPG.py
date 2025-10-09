@@ -234,8 +234,8 @@ class IDDPG:
     # 保存 / 加载（对齐 MADDPG）
     def save(self, prefix="iddpg"):
         for i in range(self.n_agents):
-            torch.save(self.actors[i].state_dict(), f"{prefix}_actor_{i}.pth")
-            torch.save(self.critics[i].state_dict(), f"{prefix}_critic_{i}.pth")
+            torch.save(self.actors[i].state_dict(), f"./model_pth/{prefix}/{prefix}_actor_{i}.pth")
+            torch.save(self.critics[i].state_dict(), f"./model_pth/{prefix}/{prefix}_critic_{i}.pth")
 
     def load(self, prefix="iddpg"):
         for i in range(self.n_agents):

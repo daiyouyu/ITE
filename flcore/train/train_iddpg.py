@@ -74,9 +74,19 @@ def train_iddpg(episodes=1000,train = 31,test = 1,
 
         # 统计（打印友好）
         ep_info = {
-            a: {"p_bat":0.0,"p_grid_buy":0.0,"G_demand":0.0,"newpower_gen":0.0,"grid_price":0.0,"bioler_gen":0.0,
-                "soc":0.0,"cost_deg":0.0,"cost_gen":0.0,
-                "market_buy_MWh":0.0,"market_sell_MWh":0.0,"grid_buy_MWh":0.0,"elec_cost":0.0,"total_cost":0.0}
+            a: {
+                "G_demand_MWH":0.0,
+                "p_bat_MWh":0.0,
+                "market_buy_MWh": 0.0,
+                "market_sell_MWh": 0.0,
+                "grid_buy_MWh": 0.0,
+                "newpower_gen_MWh":0.0,
+                "bioler_gen_MWh":0.0,
+                "soc_cost":0.0,
+                "boiler_cost":0.0,
+                "p_grid_buy": 0.0,
+                "elec_cost":0.0,
+                "total_cost":0.0}
             for a in range(len(agents))
         }
 
@@ -110,18 +120,17 @@ def train_iddpg(episodes=1000,train = 31,test = 1,
             # 累计打印用 info
             for idx, a in enumerate(agents):
                 info = info_dict[a]
-                ep_info[idx]["p_bat"] += info.get("p_bat", 0.0)
-                ep_info[idx]["p_grid_buy"] += info.get("p_grid_buy", 0.0)
-                ep_info[idx]["G_demand"] += info.get("G_demand", 0.0)
-                ep_info[idx]["newpower_gen"] += info.get("newpower_gen", 0.0)
-                ep_info[idx]["grid_price"] += info.get("grid_price", 0.0)
-                ep_info[idx]["bioler_gen"] += info.get("bioler_gen", 0.0)
-                ep_info[idx]["soc"] += info.get("soc", 0.0)
-                ep_info[idx]["cost_deg"] += info.get("cost_deg", 0.0)
-                ep_info[idx]["cost_gen"] += info.get("cost_gen", 0.0)
+                ep_info[idx]["G_demand_MWH"] += info.get("G_demand", 0.0)
                 ep_info[idx]["market_buy_MWh"] += info.get("market_buy_MWh", 0.0)
                 ep_info[idx]["market_sell_MWh"] += info.get("market_sell_MWh", 0.0)
+                ep_info[idx]["newpower_gen_MWh"] += info.get("newpower_gen", 0.0)
+                ep_info[idx]["bioler_gen_MWh"] += info.get("bioler_gen", 0.0)
                 ep_info[idx]["grid_buy_MWh"] += info.get("grid_buy_MWh", 0.0)
+                ep_info[idx]["p_bat_MWh"] += info.get("p_bat", 0.0)
+                
+                ep_info[idx]["p_grid_buy"] += info.get("p_grid_buy", 0.0)
+                ep_info[idx]["soc_cost"] += info.get("soc_cost", 0.0)
+                ep_info[idx]["boiler_cost"] += info.get("boiler_cost", 0.0)
                 ep_info[idx]["elec_cost"] += info.get("elec_cost", 0.0)
                 ep_info[idx]["total_cost"] += info.get("total_cost", 0.0)
 
@@ -148,4 +157,5 @@ def train_iddpg(episodes=1000,train = 31,test = 1,
         # test_rewards.append(test_ep_rew)
 
     env.close()
+    iddpg.save("iddpg")
     return rewards, test_rewards

@@ -142,14 +142,14 @@ class BatteryEnvSingle(gym.Env):
         net_power = L - R - p_bat - p_gen   # MW（不裁零，留给市场清算层处理）
 
         # 4) 本地成本（不含购售电；电费由协调器做市场结算）
-        cost_deg  = self.deg_c * abs(p_bat)           # 折旧
+        soc_cost  = self.deg_c * abs(p_bat)           # 折旧
         ope       = self.cf * fuel_kgph               # 锅炉燃料
         emiss     = self.gf * p_gen
-        cost_gen  = ope + self.cco2 * emiss
+        boiler_cost  = ope + self.cco2 * emiss
         local_pen = self.penalty_soc * over
 
         # 奖励仅先返回“本地项”，最终奖励由协调器：-(电力结算+本地项)
-        local_cost = cost_deg + cost_gen - local_pen  # 注意 local_pen 已是“奖励加项”，这里减回
+        local_cost = soc_cost + boiler_cost - local_pen   # 注意 local_pen 已是“奖励加项”，这里减回
         reward_placeholder = 0.0  # 真正 reward 由协调器重算
 
         # 推进内部计步
@@ -175,7 +175,7 @@ class BatteryEnvSingle(gym.Env):
             ask_price = None
         else:
             # 单位成本：$/MWh，防爆夹紧（也可用 P 的区间）
-            unit_cost = (cost_deg + cost_gen + R_cost ) / max(1e-3, denom)
+            unit_cost = (soc_cost + boiler_cost + R_cost ) / max(1e-3, denom)
             markup = 1.0 + 0.5 * (a_sell + 1.0) / 2.0  # 1.0~1.5
             ask_price = float(np.clip(unit_cost * markup, 0.2 * P, 1.5 * P))
 
@@ -194,8 +194,8 @@ class BatteryEnvSingle(gym.Env):
             "grid_price": P,
             "soc": self._soc,
             "net_power_MW": net_power,    # 给协调器做市场清算
-            "cost_deg": cost_deg,
-            "cost_gen": cost_gen,
+            "soc_cost": soc_cost,
+            "boiler_cost": boiler_cost,
             "local_cost": local_cost,     # 便于协调器直接叠加
 
             # === 市场撮合所需 ===
@@ -311,7 +311,9 @@ class MultiBatteryCoordinator(gym.Env):
 
         # 2) 撮合（从最低报价卖家开始）
         sellers.sort(key=lambda x: x[0])  # 价格升序
+        #sellers_offersum = sum(sellers[:][2])
         buyers.sort(key=lambda x: x[0] , reverse =True)
+        #buyers_demandsum = sum(buyers[:][2])
         seller_left = {aid: offer for _, aid, offer in sellers}
 
         for (need_price,buyer_aid, need) in buyers:
@@ -368,7 +370,7 @@ class MultiBatteryCoordinator(gym.Env):
             trade_sell_MW = market_sell_MWh / max(1e-9, dt_h)
             surplus_MW = max(0.0, offer_MW - trade_sell_MW)
             # 废电惩罚
-            surplus_cost = surplus_MW * p_grid_buy * 0.0 * dt_h
+            surplus_cost = surplus_MW * p_grid_buy * 0.1 * dt_h
             # 费用口径：支出为正、收入为负
             # - 买家：elec_cost = grid_cost + market_cash（支出）
             # - 卖家：elec_cost = - market_cash（收入记负）
