@@ -239,5 +239,5 @@ class IDDPG:
 
     def load(self, prefix="iddpg"):
         for i in range(self.n_agents):
-            self.actors[i].load_state_dict(torch.load(f"{prefix}_actor_{i}.pth", map_location=device))
-            self.critics[i].load_state_dict(torch.load(f"{prefix}_critic_{i}.pth", map_location=device))
+            self.actors[i].load_state_dict(torch.load(f"./model_pth/{prefix}/{prefix}_actor_{i}.pth", map_location=device))
+            self.critics[i].load_state_dict(torch.load(f"./model_pth/{prefix}/{prefix}_critic_{i}.pth", map_location=device))

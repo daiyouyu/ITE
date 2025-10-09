@@ -23,8 +23,8 @@ class BatteryEnvSingle(gym.Env):
                  episode_len=24,          # 由协调器传全局长度
                  obs_norm=True,           # 仍保留，便于后续扩展
                  # 锅炉/发电
-                 Fbmax=5000.0, LHV=25000.0, cco2=0.01,
-                 cf=30.7, gf=0.8325,
+                 Fbmax=1500.0, LHV=25000.0, cco2=0.01,
+                 cf=22.7563, gf=0.8325,
                  seed: int | None = None,
                  ):
         super().__init__()
@@ -169,7 +169,7 @@ class BatteryEnvSingle(gym.Env):
         a_buy  = float(np.clip(action[4], -1.0, 1.0))
         # 供需声明（MW）
         demand_MW = max(0.0, net_power)  # >0 需要购电
-        offer_MW = max(0.0, -net_power) * 0.9  # <0 可对外售电
+        offer_MW = max(0.0, -net_power) * 0.8  # <0 可对外售电
         # 当没有有效“可供电能”时，直接声明不卖，避免 unit_cost 除 0
         if offer_MW <= 1e-6 or denom <= 1e-3:
             ask_price = None
@@ -370,7 +370,7 @@ class MultiBatteryCoordinator(gym.Env):
             trade_sell_MW = market_sell_MWh / max(1e-9, dt_h)
             surplus_MW = max(0.0, offer_MW - trade_sell_MW)
             # 废电惩罚
-            surplus_cost = surplus_MW * p_grid_buy * 0.1 * dt_h
+            surplus_cost = surplus_MW * p_grid_buy * 0.8 * dt_h
             # 费用口径：支出为正、收入为负
             # - 买家：elec_cost = grid_cost + market_cash（支出）
             # - 卖家：elec_cost = - market_cash（收入记负）
