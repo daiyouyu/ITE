@@ -12,15 +12,15 @@ def _flatten(xs):
 def _by_agents(d: dict, agents: list[str]):
     return [d[a] for a in agents]
 
-def train_iddpg(episodes=1000, max_steps=24*7, render=False,
+def train_iddpg(episodes=1000,train = 31,test = 1,
                 gamma=0.99, tau=0.01, batch_size=256, buffer_size=200000,
                 noise_warmup_steps=24):
     # === 数据切分（与 train_maddpg 同风格）===
     data = load_power_data("./data/GridSet_no_pred.csv", price_mode="mean")
     T = len(data[0]["P"])
-    train_days, test_days = 31 * 6, 1
-    train_idx = train_days * 24
-    test_idx = (train_days + test_days) * 24
+
+    train_idx = train * 24
+    test_idx = (train + test) * 24
 
     train_series = [{k: v[:train_idx] for k, v in d.items()} for d in data]
     test_series  = [{k: v[train_idx:test_idx] for k, v in d.items()} for d in data]
@@ -75,18 +75,18 @@ def train_iddpg(episodes=1000, max_steps=24*7, render=False,
         # 统计（打印友好）
         ep_info = {
             a: {"p_bat":0.0,"p_grid_buy":0.0,"G_demand":0.0,"newpower_gen":0.0,"grid_price":0.0,"bioler_gen":0.0,
-                "soc":0.0,"cost_grid":0.0,"cost_deg":0.0,"cost_gen":0.0,
+                "soc":0.0,"cost_deg":0.0,"cost_gen":0.0,
                 "market_buy_MWh":0.0,"market_sell_MWh":0.0,"grid_buy_MWh":0.0,"elec_cost":0.0,"total_cost":0.0}
             for a in range(len(agents))
         }
 
-        for t in range(max_steps):
+        for t in range(test_idx):
             obs_list = _by_agents(obs, agents)
             # 前若干步探索更强（或直接 sample），后续减噪
             if t < noise_warmup_steps:
                 actions_list = [env.action_spaces[a].sample() for a in agents]
             else:
-                noise_scale = (1-t/max_steps) * 0.3
+                noise_scale = (1-t/test_idx) * 0.3
                 actions_list = iddpg.select_actions(obs_list, noise_scale=noise_scale)
 
             action_dict = {a: actions_list[i] for i, a in enumerate(agents)}
@@ -117,7 +117,6 @@ def train_iddpg(episodes=1000, max_steps=24*7, render=False,
                 ep_info[idx]["grid_price"] += info.get("grid_price", 0.0)
                 ep_info[idx]["bioler_gen"] += info.get("bioler_gen", 0.0)
                 ep_info[idx]["soc"] += info.get("soc", 0.0)
-                ep_info[idx]["cost_grid"] += info.get("cost_grid", 0.0)
                 ep_info[idx]["cost_deg"] += info.get("cost_deg", 0.0)
                 ep_info[idx]["cost_gen"] += info.get("cost_gen", 0.0)
                 ep_info[idx]["market_buy_MWh"] += info.get("market_buy_MWh", 0.0)
@@ -129,11 +128,11 @@ def train_iddpg(episodes=1000, max_steps=24*7, render=False,
             if all(done_list):
                 break
 
-        rewards.append(ep_rew)
+        rewards.append((ep_rew / t) * 24)
         end_time = time.time()
         ep_time = (end_time - start_time) / 60
         print(f"当前轮次时间: {ep_time:.3f}分钟，预计剩余时间{ep_time * (episodes - ep):.3f}分钟")
-        print(format_episode_info(ep, ep_rew, ep_info[0]))
+        print(format_episode_info(ep, (ep_rew / t) * 24, ep_info[0]))
 
         # ===== 可选：测试评估（不入缓存、不加噪声）=====
         # test_obs, _ = test_env.reset()
