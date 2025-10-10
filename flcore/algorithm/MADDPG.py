@@ -276,13 +276,15 @@ class MADDPG:
         # 5) 清空历史，开始新一轮累计
         self.proto_history = [[] for _ in range(self.n_agents)]
 
-
+    # 保存 / 加载（对齐 MADDPG）
     def save(self, prefix="maddpg"):
         for i in range(self.n_agents):
-            torch.save(self.actors[i].state_dict(), f"{prefix}_actor_{i}.pth")
-            torch.save(self.critics[i].state_dict(), f"{prefix}_critic_{i}.pth")
+            torch.save(self.actors[i].state_dict(), f"./model_pth/{prefix}/{prefix}_actor_{i}.pth")
+            torch.save(self.critics[i].state_dict(), f"./model_pth/{prefix}/{prefix}_critic_{i}.pth")
 
     def load(self, prefix="maddpg"):
         for i in range(self.n_agents):
-            self.actors[i].load_state_dict(torch.load(f"{prefix}_actor_{i}.pth"))
-            self.critics[i].load_state_dict(torch.load(f"{prefix}_critic_{i}.pth"))
+            self.actors[i].load_state_dict(
+                torch.load(f"./model_pth/{prefix}/{prefix}_actor_{i}.pth", map_location=device))
+            self.critics[i].load_state_dict(
+                torch.load(f"./model_pth/{prefix}/{prefix}_critic_{i}.pth", map_location=device))

@@ -2,7 +2,6 @@ import pandas as pd
 import numpy as np
 
 def load_power_data(csv_path: str,
-                    price_mode: str = "mean",   # 'mean' 或 指定某个LZ列名，如 'LZ_HOUSTON'
                     start=None, end=None):
     df = pd.read_csv(csv_path, parse_dates=['date'])
     if start is not None: df = df[df['date'] >= pd.to_datetime(start)]

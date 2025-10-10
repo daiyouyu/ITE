@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 #导入算法
 from flcore.train.train_ddpg import train_ddpg
 from flcore.train.train_iddpg import train_iddpg
@@ -17,17 +18,30 @@ def draw_result(rewards_record):
 
     # save models
     # maddpg.save(prefix="maddpg_simple_adv")
-    #rewards_array = np.array(rewards)
-    # 保存为.npz文件（压缩格式，支持存储多个数组）
-    #np.savez('___ori_rewards.npz', rewards=rewards_array)
+
 
 
 if __name__ == "__main__":
-    #train_maddpg(episodes=5000, max_steps=100, render=False)
-    re,test_re = train_iddpg(episodes=300,train = 7 , test = 1 )
-    re = np.array(re)
-    re =re.T
-    #test_re = np.array(test_re)
-    #test_re = test_re.T
-    draw_result(re)
-    #draw_result(test_re)
+    re1,test_re = train_maddpg(episodes=10,train = 7 , test = 1 )
+    re2,test_re = train_iddpg(episodes=10,train = 7 , test = 1 )
+    re1 = np.array(re1)
+    re1 =re1.T
+    re2 = np.array(re2)
+    re2 = re2.T
+    draw_result(re1)
+    draw_result(re2)
+
+    re1_array = np.array(re1)
+    re2_array = np.array(re2)
+    # 指定保存目录（例如当前目录下的 'data' 文件夹）
+    save_dir = './result'
+
+    # 检查目录是否存在，不存在则创建
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)  # 递归创建目录（包括父目录）
+
+    # 拼接完整路径（目录 + 文件名）
+    file_path = os.path.join(save_dir, 'result_arrays')
+
+    # 保存到指定目录
+    np.savez(file_path, array1=re1_array, array2=re2_array)
