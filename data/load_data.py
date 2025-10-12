@@ -34,7 +34,7 @@ def load_power_data(csv_path: str,
         data.append({
             'datetime': df['date'].values,
             'L': L[:,i],
-            'R': R[i]*0.5,
+            'R': R[i]*0.3,
             'P': P[:,i],
             'sin_h': sin_h,
             'cos_h': cos_h

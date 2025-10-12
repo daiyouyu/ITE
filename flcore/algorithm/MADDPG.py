@@ -285,6 +285,6 @@ class MADDPG:
     def load(self, prefix="maddpg"):
         for i in range(self.n_agents):
             self.actors[i].load_state_dict(
-                torch.load(f"./model_pth/{prefix}/{prefix}_actor_{i}.pth", map_location=device))
+                torch.load(f"./model_pth/{prefix}/{prefix}_actor_{i}.pth", map_location=device,weights_only=True))
             self.critics[i].load_state_dict(
-                torch.load(f"./model_pth/{prefix}/{prefix}_critic_{i}.pth", map_location=device))
+                torch.load(f"./model_pth/{prefix}/{prefix}_critic_{i}.pth", map_location=device,weights_only=True))

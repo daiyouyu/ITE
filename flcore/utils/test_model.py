@@ -28,10 +28,12 @@ for _fp in _preferred_fonts:
 # 解决坐标轴负号显示为方块的问题
 plt.rcParams['axes.unicode_minus'] = False
 from typing import Dict, List, Tuple
+import argparse
 
 from flcore.Env.multi_env import MultiBatteryCoordinator
 from data.load_data import load_power_data
 from flcore.algorithm.IDDPG import IDDPG
+from flcore.algorithm.MADDPG import MADDPG
 
 # ----------------------------
 # Helpers
@@ -46,7 +48,7 @@ def _by_agents(d: Dict[str, np.ndarray], agents: List[str]) -> List[np.ndarray]:
 # Evaluation & Plotting
 # ----------------------------
 def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
-                               iddpg: IDDPG,
+                               model,
                                agents: List[str],
                                day_start_idx: int,
                                dt_hours: float = 1.0) -> Dict[str, np.ndarray]:
@@ -72,7 +74,7 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
     }
 
     for h in range(hours):
-        acts = iddpg.select_actions(_by_agents(obs, agents), noise_scale=0.0)
+        acts = model.select_actions(_by_agents(obs, agents), noise_scale=0.0)
         action_dict = {a: acts[i] for i, a in enumerate(agents)}
         next_obs, rew_dict, term_dict, trunc_dict, info_dict = env.step(action_dict)
 
@@ -107,7 +109,7 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
 
 
 def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
-                              iddpg: IDDPG,
+                              model,
                               agents: List[str],
                               day_start_idx: int,
                               dt_hours: float = 1.0) -> Dict[str, Dict[str, np.ndarray]]:
@@ -133,7 +135,7 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
         for a in agents}
 
     for h in range(hours):
-        acts = iddpg.select_actions(_by_agents(obs, agents), noise_scale=0.0)
+        acts = model.select_actions(_by_agents(obs, agents), noise_scale=0.0)
         action_dict = {a: acts[i] for i, a in enumerate(agents)}
         next_obs, rew_dict, term_dict, trunc_dict, info_dict = env.step(action_dict)
 
@@ -283,7 +285,8 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
 # ----------------------------
 # Main entry: evaluation + plot
 # ----------------------------
-def test_iddpg_and_plot(train_days: int = 31,
+def test_model_and_plot(algo:str="iddpg",
+                        train_days: int = 31,
                         test_days: int = 1,
                         plot_day_offset: int = 0,
                         gamma: float = 0.99,
@@ -292,11 +295,11 @@ def test_iddpg_and_plot(train_days: int = 31,
                         buffer_size: int = 200_000) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
     1) 构建训练/测试环境
-    2) 用已训练好的 IDDPG 策略在测试集上前向评估
+    2) 用已训练好的 model 策略在测试集上前向评估
     3) 从测试集选定的一天（plot_day_offset）绘制 24 小时堆叠柱图
     """
     # === 数据切分 ===
-    data = load_power_data("./data/GridSet_no_pred.csv", price_mode="mean")
+    data = load_power_data("./data/GridSet_no_pred.csv")
     T = len(data[0]["P"])  # 每个园区长度一致
 
     train_idx = train_days * 24
@@ -335,22 +338,29 @@ def test_iddpg_and_plot(train_days: int = 31,
     obs_dims = [int(np.asarray(o).size) for o in _by_agents(obs, agents)]
     action_dims = [int(test_env.action_spaces[a].shape[0]) for a in agents]
     max_actions = [float(test_env.action_spaces[a].high[0]) for a in agents]
-
-    iddpg = IDDPG(
-        obs_dims, action_dims, max_actions,
-        lr_actor=1e-3, lr_critic=1e-3,
-        gamma=gamma, tau=tau,
-        batch_size=batch_size, buffer_size=buffer_size
-    )
-    # 假设本地已有训练权重
-    iddpg.load()
-
+    if algo == "iddpg":
+        model = IDDPG(
+            obs_dims, action_dims, max_actions,
+            lr_actor=1e-3, lr_critic=1e-3,
+            gamma=gamma, tau=tau,
+            batch_size=batch_size, buffer_size=buffer_size
+        )
+        # 假设本地已有训练权重
+        
+    elif algo == "maddpg":
+        model = MADDPG(
+            obs_dims, action_dims, max_actions,
+            lr_actor=1e-3, lr_critic=1e-3,
+            gamma=gamma, tau=tau,
+            batch_size=batch_size, buffer_size=buffer_size
+        )
+    model.load()
     # === 先做一次完整测试集评估（可选）===
     test_rewards = []
     test_obs, _ = test_env.reset()
     ep_rew = np.zeros(len(agents), dtype=np.float32)
     for _ in range(test_idx - train_idx):
-        al = iddpg.select_actions(_by_agents(test_obs, agents), noise_scale=0.0)
+        al = model.select_actions(_by_agents(test_obs, agents), noise_scale=0.0)
         nd = {a: al[i] for i, a in enumerate(agents)}
         test_next_obs, test_rew_dict, test_term_dict, test_trunc_dict, _info = test_env.step(nd)
         ep_rew += np.array(_by_agents(test_rew_dict, agents), dtype=np.float32)
@@ -362,14 +372,14 @@ def test_iddpg_and_plot(train_days: int = 31,
     # === 选取测试集中的第 plot_day_offset 天，绘图 ===
     # 该天在测试集内的起始索引（相对 test_env）
     day_start = plot_day_offset * 24
-    agg = rollout_one_day_and_collect(test_env, iddpg, agents, day_start_idx=day_start, dt_hours=1.0)
+    agg = rollout_one_day_and_collect(test_env, model, agents, day_start_idx=day_start, dt_hours=1.0)
     plot_daily_stack(agg, title=f"测试集第 {plot_day_offset+1} 天：用电与供给堆叠图（MW）",
-                     save_path="daily_supply_stack.png")
+                     save_path=f"./result/{algo}/daily_supply_stack.png")
 
     # 分智能体：各出一张图
-    per = rollout_one_day_per_agent(test_env, iddpg, agents, day_start_idx=day_start, dt_hours=1.0)
-    saved_files = plot_daily_stack_per_agent(per, save_dir="./result/", filename_prefix="daily_agent_")
-    grid_path = plot_daily_stack_per_agent_grid(per, save_path="daily_agents_grid.png",
+    per = rollout_one_day_per_agent(test_env, model, agents, day_start_idx=day_start, dt_hours=1.0)
+    saved_files = plot_daily_stack_per_agent(per, save_dir=f"./result/{algo}", filename_prefix="daily_agent_")
+    grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"./result/{algo}/daily_agents_grid.png",
                                                 title=f"测试集第 {plot_day_offset+1} 天：各智能体日内需求与供给（MW）")
 
     print("Saved plot -> daily_supply_stack.png")
@@ -380,5 +390,26 @@ def test_iddpg_and_plot(train_days: int = 31,
 
 
 if __name__ == "__main__":
-    # 示例：训练集 31 天、测试集 1 天，绘制测试集第 1 天
-    test_iddpg_and_plot(train_days=31, test_days=4, plot_day_offset=3)
+    # 创建参数解析器
+    parser = argparse.ArgumentParser(description='测试模型并绘图的参数设置')
+
+    # 添加参数
+    parser.add_argument('--algo', type=str, default='maddpg',
+                        help='算法名称，默认是maddpg')
+    parser.add_argument('--train_days', type=int, default=31 * 12,
+                        help='训练天数，默认是31*12')
+    parser.add_argument('--test_days', type=int, default=4,
+                        help='测试天数，默认是4')
+    parser.add_argument('--plot_day_offset', type=int, default=1,
+                        help='绘图偏移天数，默认是1')
+
+    # 解析参数
+    args = parser.parse_args()
+
+    # 调用函数并传递参数
+    test_model_and_plot(
+        algo=args.algo,
+        train_days=args.train_days,
+        test_days=args.test_days,
+        plot_day_offset=args.plot_day_offset
+    )
