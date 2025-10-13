@@ -62,7 +62,7 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
         if all(bool(term[a]) or bool(trunc[a]) for a in agents):
             break
 
-    hours = 24
+    hours = 48
     agg = {
         'demand': np.zeros(hours, dtype=np.float32),
         'renew': np.zeros(hours, dtype=np.float32),
@@ -144,7 +144,7 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
             per[aid]['demand'][h] = float(inf.get('G_demand', 0.0))
             per[aid]['renew'][h] = float(inf.get('newpower_gen', 0.0))
             p_bat = float(inf.get('p_bat', 0.0))
-            per[aid]['bat_dis'][h] = max(0.0, p_bat)
+            per[aid]['bat_dis'][h] =  p_bat
             per[aid]['boiler'][h] = max(0.0, float(inf.get('bioler_gen', 0.0)))
             per[aid]['market_buy'][h] = float(inf.get('market_buy_MWh', 0.0)) / max(1e-9, dt_hours)
             per[aid]['grid_buy'][h] = float(inf.get('grid_buy_MWh', 0.0)) / max(1e-9, dt_hours)
@@ -354,7 +354,7 @@ def test_model_and_plot(algo:str="iddpg",
             gamma=gamma, tau=tau,
             batch_size=batch_size, buffer_size=buffer_size
         )
-    model.load()
+    model.load(Fed=False)
     # === 先做一次完整测试集评估（可选）===
     test_rewards = []
     test_obs, _ = test_env.reset()
@@ -407,9 +407,10 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # 调用函数并传递参数
-    test_model_and_plot(
+    _,re=test_model_and_plot(
         algo=args.algo,
         train_days=args.train_days,
         test_days=args.test_days,
         plot_day_offset=args.plot_day_offset
     )
+    print(sum(re))

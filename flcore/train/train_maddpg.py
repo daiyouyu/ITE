@@ -7,7 +7,7 @@ from flcore.utils.print_epreward import format_episode_info
 import numpy as np
 import time
 
-def train_maddpg(episodes=1000,train=7,test=1):
+def train_maddpg(episodes=1000,train=7,test=1,Federated=True,):
     # --- 统一使用公共预设 ---
     presets = default_presets()
     train_series, test_series, T, train_idx, test_idx = load_series_split(
@@ -64,8 +64,9 @@ def train_maddpg(episodes=1000,train=7,test=1):
             maddpg.replay.add(joint_obs, joint_actions, rew_list, joint_next_obs, done_list)
             if t % 3 == 0:
                 maddpg.update()
-            #if t % 24 == 0:
-                #maddpg.Fed_Aggergate()
+            if Federated:
+                if t % 24 == 0:
+                    maddpg.Fed_Aggergate()
             obs = next_obs
             ep_rew += np.array(rew_list, dtype=np.float32)
 
@@ -90,9 +91,9 @@ def train_maddpg(episodes=1000,train=7,test=1):
         # 与原实现保持一致的“按小时归一后*24”的口径
         rewards.append((ep_rew / max(1, t)) * 24)
         ep_time = (time.time() - start_time) / 60
-        print(f"当前轮次时间: {ep_time:.3f}分钟,预计剩余时间：{ep_time * (horizon-t):.3f}")
+        print(f"当前轮次时间: {ep_time:.3f}分钟,预计剩余时间：{ep_time * (episodes-ep):.3f}")
         print(format_episode_info(ep, (ep_rew / max(1, t)) * 24, ep_info[0]))
 
     env.close()
-    maddpg.save("maddpg")
+    maddpg.save("maddpg",Fed = Federated)
     return rewards, test_rewards

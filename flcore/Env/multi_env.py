@@ -16,9 +16,9 @@ class BatteryEnvSingle(gym.Env):
                  dt_hours=1.0,
                  E_bat_MWh=100.0,
                  P_bat_max_MW=50.0,
-                 eta_ch=0.95, eta_dis=0.95,
+                 eta_ch=0.95, eta_dis=1.05,
                  soc_min=0.1, soc_max=0.9, soc_init=0.5,
-                 deg_cost_per_MW=0.5,
+                 deg_cost_per_MW=5.8113,
                  penalty_soc=0.0,
                  episode_len=24,          # 由协调器传全局长度
                  obs_norm=True,           # 仍保留，便于后续扩展
@@ -31,6 +31,7 @@ class BatteryEnvSingle(gym.Env):
         self.dt = float(dt_hours)
         self.E = float(E_bat_MWh)
         self.Pmax = float(P_bat_max_MW)
+        self.P_es = 0.1
         self.eta_ch, self.eta_dis = float(eta_ch), float(eta_dis)
         self.soc_min, self.soc_max = float(soc_min), float(soc_max)
         self.soc_init = float(soc_init)
@@ -60,7 +61,7 @@ class BatteryEnvSingle(gym.Env):
         self._P_scale = 1.0
 
         # 动作/观测空间
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(5,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(4,), dtype=np.float32)
         self.observation_space = spaces.Box(
             low=np.array([0.0, 0.0, -10.0, self.soc_min, -1.0, -1.0, 0.0, -1.0], dtype=np.float32),
             high=np.array([2.0, 2.0, 10000.0, self.soc_max, 1.0, 1.0, 1e6, 1.0], dtype=np.float32)        )
@@ -103,70 +104,49 @@ class BatteryEnvSingle(gym.Env):
 
         # 1) 电池动作缩放
         a = float(np.clip(action[0], -1.0, 1.0))
-        p_bat_raw = a * self.Pmax
-        soc = self._soc
+        a = (a + 1) / 2               #调整到 0~1
+        if self.P_es >= 0 and self._soc < self.soc_max:
+            self.P_es = min(a * self.Pmax,(self.soc_max-self._soc) * self.E/self.eta_ch)
+            eta = self.eta_ch
+        else:
+            self.P_es = max(a * -self.Pmax, (self.soc_min - self._soc) * self.E / self.eta_dis)
+            eta = self.eta_dis
+        soc =  (eta * self.P_es)/self.E
+        self._soc = soc+self._soc
 
-        # 基于 SOC 的可行区间
-        p_dis_feasible_max = max(0.0, (soc - self.soc_min) * self.E * self.eta_dis / self.dt)
-        p_chg_feasible_max = max(0.0, (self.soc_max - soc) * self.E / (self.eta_ch * self.dt))
-        lb_soc = -min(self.Pmax, p_chg_feasible_max)
-        ub_soc = min(self.Pmax, p_dis_feasible_max)
-        p_bat = float(np.clip(p_bat_raw, lb_soc, ub_soc))
-
-        # SOC 更新 & 净功率（>0 表示净购电；<0 表示可售）
-        if p_bat < 0:  # 充电
-            delta_soc = (self.eta_ch * (-p_bat) * self.dt) / self.E
-        else:  # 放电
-            delta_soc = -((p_bat) * self.dt / self.E) / self.eta_dis
-        soc_next = soc + delta_soc
-
-        # SOC 裁剪与软罚
-        over = 0.0
-        if soc_next < self.soc_min:
-            over = self.soc_min - soc_next
-            soc_next = self.soc_min
-        elif soc_next > self.soc_max:
-            over = soc_next - self.soc_max
-            soc_next = self.soc_max
-
-
-        # 2) 锅炉两台（用动作[1],[2]）
+        # 2) 锅炉（用动作[1]）
         bfw_1 = float(np.clip(action[1], -1.0, 1.0))
-        bfw_2 = float(np.clip(action[2], -1.0, 1.0))
         fuel1_kgph, p_gen1 = self._boiler_block(bfw_1)
-        fuel2_kgph, p_gen2 = self._boiler_block(bfw_2)
-        fuel_kgph = fuel1_kgph + fuel2_kgph
-        p_gen = p_gen1 + p_gen2
+        fuel_kgph = fuel1_kgph
+        p_gen = p_gen1
 
         #电力结算
-        net_power = L - R - p_bat - p_gen   # MW（不裁零，留给市场清算层处理）
+        net_power = L - R + self.P_es - p_gen   # MW（不裁零，留给市场清算层处理）
 
         # 4) 本地成本（不含购售电；电费由协调器做市场结算）
-        soc_cost  = self.deg_c * abs(p_bat)           # 折旧
+        soc_cost  = self.deg_c * abs(self.P_es)           # 折旧
         ope       = self.cf * fuel_kgph               # 锅炉燃料
         emiss     = self.gf * p_gen
         boiler_cost  = ope + self.cco2 * emiss
-        local_pen = self.penalty_soc * over
 
         # 奖励仅先返回“本地项”，最终奖励由协调器：-(电力结算+本地项)
-        local_cost = soc_cost + boiler_cost - local_pen   # 注意 local_pen 已是“奖励加项”，这里减回
+        local_cost = soc_cost + boiler_cost    # 注意 local_pen 已是“奖励加项”，这里减回
         reward_placeholder = 0.0  # 真正 reward 由协调器重算
 
         # 推进内部计步
-        self._soc = float(soc_next)
         self._t += 1
         done = (self._t >= self.episode_len)
 
         # === 子环境决定：是否售电 / 售电报价（成本×1.1） / 购买外部电价 ===
         # 单位成本近似：以“用于供电的出力”作为分母做加权
-        p_dis = max(0.0, p_bat)  # 电池放电功率
+        p_dis = max(0.0, self.P_es)  # 电池放电功率
         gen = max(0.0, p_gen)  # 锅炉出力
         R_gen = max(0.0, R)
         R_cost = max(0.0, R_gen * 5)
         denom = max(1e-9, p_dis + gen + R_gen)
 
-        a_sell = float(np.clip(action[3], -1.0, 1.0))
-        a_buy  = float(np.clip(action[4], -1.0, 1.0))
+        a_sell = float(np.clip(action[2], -1.0, 1.0))
+        a_buy  = float(np.clip(action[3], -1.0, 1.0))
         # 供需声明（MW）
         demand_MW = max(0.0, net_power)  # >0 需要购电
         offer_MW = max(0.0, -net_power) * 0.8  # <0 可对外售电
@@ -187,7 +167,7 @@ class BatteryEnvSingle(gym.Env):
 
         obs_next = self._make_obs()
         info = {
-            "p_bat": p_bat,
+            "p_bat": -self.P_es,
             "bioler_gen": p_gen,
             "G_demand": L,
             "newpower_gen": R,

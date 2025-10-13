@@ -40,11 +40,11 @@ def default_presets() -> Presets:
     env_kwargs = dict(
         n_agents=4,
         dt_hours=1.0,
-        E_bat_MWh=10000.0,
-        P_bat_max_MW=5000.0,
-        eta_ch=0.95, eta_dis=0.95,
+        E_bat_MWh=3000.0,
+        P_bat_max_MW=1000.0,
+        eta_ch=0.95, eta_dis=1.05,
         soc_min=0.1, soc_max=0.9, soc_init=0.1,
-        deg_cost_per_MW=0.1,
+        deg_cost_per_MW=1,
         obs_norm=True,
     )
 

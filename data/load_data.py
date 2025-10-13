@@ -15,9 +15,9 @@ def load_power_data(csv_path: str,
     # 可再生 (系统级): 风 + 光
     R_wind  = df['WIND_ACTUAL_SYSTEM_WIDE'].astype(float).values
     R_solar = df['SOLAR_ACTUAL_SYSTEM_WIDE'].astype(float).values  # MW
-    R = [R_wind * 0.25  + R_solar * 0.9,
-         R_wind * 0.25 + R_solar * 0,
-         R_wind * 0.25  + R_solar * 0.9,
+    R = [R_wind * 0.0  + R_solar * 1.5,
+         R_wind * 0.5 + R_solar * 0,
+         R_wind * 0.0  + R_solar * 1.5,
          R_wind * 0.25 + R_solar * 0,]
     #R = [R * 0.3, R * 0.3, R * 0.05, R * 0.1, R * 0.1,R * 0.1,R *0.1,R* 0.1]
     # 电价：均值或指定LZ_*列

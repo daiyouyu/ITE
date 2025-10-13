@@ -232,12 +232,12 @@ class IDDPG:
         self.proto_history = [[] for _ in range(self.n_agents)]
 
     # 保存 / 加载（对齐 MADDPG）
-    def save(self, prefix="iddpg"):
+    def save(self, prefix="iddpg",Fed=False):
         for i in range(self.n_agents):
-            torch.save(self.actors[i].state_dict(), f"./model_pth/{prefix}/{prefix}_actor_{i}.pth")
-            torch.save(self.critics[i].state_dict(), f"./model_pth/{prefix}/{prefix}_critic_{i}.pth")
+            torch.save(self.actors[i].state_dict(), f"./model_pth/{prefix}/{Fed}_actor_{i}.pth")
+            torch.save(self.critics[i].state_dict(), f"./model_pth/{prefix}/{Fed}_critic_{i}.pth")
 
-    def load(self, prefix="iddpg"):
+    def load(self, prefix="iddpg",Fed=False):
         for i in range(self.n_agents):
-            self.actors[i].load_state_dict(torch.load(f"./model_pth/{prefix}/{prefix}_actor_{i}.pth", map_location=device,weights_only=True))
-            self.critics[i].load_state_dict(torch.load(f"./model_pth/{prefix}/{prefix}_critic_{i}.pth", map_location=device,weights_only=True))
+            self.actors[i].load_state_dict(torch.load(f"./model_pth/{prefix}/{Fed}_actor_{i}.pth", map_location=device,weights_only=True))
+            self.critics[i].load_state_dict(torch.load(f"./model_pth/{prefix}/{Fed}_critic_{i}.pth", map_location=device,weights_only=True))
