@@ -23,8 +23,8 @@ def draw_result(rewards_record):
 
 if __name__ == "__main__":
     #re1,test_re = train_maddpg(episodes=100,train = 7  , test = 1 ,Federated = True)
-    re1, test_re = train_maddpg(episodes=200, train=31 , test=1, Federated=False)
-    re2,test_re = train_maddpg(episodes=200,train = 31  , test = 1 ,Federated = True)
+    re1, test_re = train_iddpg(episodes=50, train=2 , test=1, Federated=False)
+    re2,test_re = train_iddpg(episodes=50,train = 2  , test = 1 ,Federated = True)
     re1 = np.array(re1)
     re1 =re1.T
     re2 = np.array(re2)

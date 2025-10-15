@@ -4,6 +4,7 @@ from typing import List, Tuple, Dict, Any
 import numpy as np
 
 from data.load_data import load_power_data
+from data.load_data import load_ITE_data
 from flcore.Env.multi_env import MultiBatteryCoordinator
 
 # ---------- 公用小工具 ----------
@@ -40,10 +41,6 @@ def default_presets() -> Presets:
     env_kwargs = dict(
         n_agents=4,
         dt_hours=1.0,
-        E_bat_MWh=3000.0,
-        P_bat_max_MW=1000.0,
-        eta_ch=0.95, eta_dis=1.05,
-        soc_min=0.1, soc_max=0.9, soc_init=0.1,
         deg_cost_per_MW=1,
         obs_norm=True,
     )
@@ -61,9 +58,11 @@ def default_presets() -> Presets:
     )
 
 # ---------- 数据与环境 ----------
-def load_series_split(path="./data/GridSet_no_pred.csv",
+def load_series_split(path1="./data/IES_data/G_demand.csv",
+                        path2="./data/IES_data/H_demand.csv",
                       train_days=7, test_days=1):
-    data = load_power_data(path)
+    data = load_ITE_data(path1, path2)
+    #data = load_power_data(path)
     T = len(data[0]["P"])
     train_idx = train_days * 24
     test_idx = (train_days + test_days) * 24
