@@ -367,9 +367,9 @@ class MultiBatteryCoordinator(gym.Env):
             ask = inf.get("ask_price", None)
             need = inf.get("need_price", None)
 
-            if offer > 1e-9 and ask is not None:
+            if offer >= 1e-6 and ask is not None:
                 sellers.append((float(ask), aid, offer))
-            if demand > 1e-9:
+            if demand >= 1e-6:
                 buyers.append((float(need),aid, demand))
 
         # 2) 撮合（从最低报价卖家开始）

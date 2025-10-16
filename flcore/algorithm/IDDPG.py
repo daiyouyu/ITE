@@ -11,7 +11,7 @@ from collections import deque
 # 复用你的模型定义（含 head/base/foot，便于抽 proto）
 from flcore.Model import Actor, Critic
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+print(f"devcie: {device}")
 
 # ----------------------------
 # 重放缓存（与 MADDPG 保持一致：存 joint，方便一次性采样）
