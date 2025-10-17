@@ -9,9 +9,13 @@ import time
 
 def train_maddpg(episodes=1000,train=7,test=1,Federated=True,):
     # --- 统一使用公共预设 ---
-    presets = default_presets()
+    # 使用同一套公共预设
+    presets = default_presets()  # 'weekly' / 'fast_debug' / 'monthly'
     train_series, test_series, T, train_idx, test_idx = load_series_split(
-        "./data/GridSet_no_pred.csv", train_days=train, test_days=test
+        path1="./data/IES_data/G_demand.csv",
+        path2="./data/IES_data/H_demand.csv",
+        train_days=train,
+        test_days=test
     )
     env, test_env = build_envs(train_series, test_series, presets.env_kwargs)
 
@@ -31,11 +35,23 @@ def train_maddpg(episodes=1000,train=7,test=1,Federated=True,):
 
         ep_info = {
             a: {
-                "G_demand_MWH": 0.0, "p_bat_MWh": 0.0,
-                "market_buy_MWh": 0.0, "market_sell_MWh": 0.0, "grid_buy_MWh": 0.0,
-                "newpower_gen_MWh": 0.0, "bioler_gen_MWh": 0.0,
-                "soc_cost": 0.0, "boiler_cost": 0.0, "p_grid_buy": 0.0,
-                "elec_cost": 0.0, "total_cost": 0.0
+                "G_demand_MWH": 0.0,
+                "p_bat_MWh": 0.0,
+                "market_buy_MWh": 0.0,
+                "market_sell_MWh": 0.0,
+                "newpower_MWh": 0.0,
+                "e_grid_buy_MWh": 0.0,
+                "P_boiler_e_MWh": 0.0,
+                "P_CHP_e_MWh": 0.0,
+                "h_demand_MWH": 0.0,
+                "h_grid_buy_MWh": 0.0,
+                "P_CHP_h_MWh": 0.0,
+                "P_HB_h_MWh": 0.0,
+                "soc_cost": 0.0,
+                "boiler_cost": 0.0,
+                "CHP_cost": 0.0,
+                "HB_cost": 0.0,
+                "market_cost": 0.0,
             } for a in range(len(agents))
         }
 
@@ -72,19 +88,26 @@ def train_maddpg(episodes=1000,train=7,test=1,Federated=True,):
 
             for idx, a in enumerate(agents):
                 info = info_dict[a]
+                # 保留你原来的统计口径键名
                 ep_info[idx]["G_demand_MWH"] += info.get("G_demand", 0.0)
                 ep_info[idx]["market_buy_MWh"] += info.get("market_buy_MWh", 0.0)
                 ep_info[idx]["market_sell_MWh"] += info.get("market_sell_MWh", 0.0)
-                ep_info[idx]["newpower_gen_MWh"] += info.get("newpower_gen", 0.0)
-                ep_info[idx]["bioler_gen_MWh"] += info.get("bioler_gen", 0.0)
-                ep_info[idx]["grid_buy_MWh"] += info.get("grid_buy_MWh", 0.0)
+                ep_info[idx]["P_boiler_e_MWh"] += info.get("P_boiler_e", 0.0)
+                ep_info[idx]["P_CHP_e_MWh"] += info.get("P_CHP_e", 0.0)
                 ep_info[idx]["p_bat_MWh"] += info.get("p_bat", 0.0)
-                ep_info[idx]["p_grid_buy"] += info.get("p_grid_buy", 0.0)
+                ep_info[idx]["newpower_MWh"] += info.get("newpower_gen", 0.0)
+                ep_info[idx]["e_grid_buy_MWh"] += info.get("grid_buy_MWh", 0.0)
+
+                ep_info[idx]["h_demand_MWH"] += info.get("H_demand", 0.0)
+                ep_info[idx]["P_CHP_h_MWh"] += info.get("P_CHP_h", 0.0)
+                ep_info[idx]["P_HB_h_MWh"] += info.get("P_HB_h", 0.0)
+                ep_info[idx]["h_grid_buy_MWh"] += info.get("h_grid_buy", 0.0)
+
                 ep_info[idx]["soc_cost"] += info.get("soc_cost", 0.0)
                 ep_info[idx]["boiler_cost"] += info.get("boiler_cost", 0.0)
-                ep_info[idx]["elec_cost"] += info.get("elec_cost", 0.0)
-                ep_info[idx]["total_cost"] += info.get("total_cost", 0.0)
-
+                ep_info[idx]["CHP_cost"] += info.get("CHP_cost", 0.0)
+                ep_info[idx]["HB_cost"] += info.get("HB_cost", 0.0)
+                ep_info[idx]["market_cost"] += info.get("market_cashflow", 0.0)
             if all(done_list):
                 break
 

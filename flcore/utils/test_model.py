@@ -31,7 +31,10 @@ from typing import Dict, List, Tuple
 import argparse
 
 from flcore.Env.multi_env import MultiBatteryCoordinator
-from data.load_data import load_power_data
+from flcore.train.train_common import (
+    default_presets, load_series_split, build_envs,
+    infer_dims, list_by_agents, flatten_obs, flatten_actions
+)
 from flcore.algorithm.IDDPG import IDDPG
 from flcore.algorithm.MADDPG import MADDPG
 
@@ -68,6 +71,7 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
         'renew': np.zeros(hours, dtype=np.float32),
         'bat_dis': np.zeros(hours, dtype=np.float32),
         'boiler': np.zeros(hours, dtype=np.float32),
+        'P_CHP_e': np.zeros(hours, dtype=np.float32),
         'market_buy': np.zeros(hours, dtype=np.float32),
         'grid_buy': np.zeros(hours, dtype=np.float32),
         'surplus_dump': np.zeros(hours, dtype=np.float32),
@@ -85,8 +89,9 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
             L += float(inf.get('G_demand', 0.0))
             R += float(inf.get('newpower_gen', 0.0))
             p_bat = float(inf.get('p_bat', 0.0))
+            P_CHP_e = float(inf.get('P_CHP_e', 0.0))
             bat_dis += max(0.0, p_bat)
-            boiler += max(0.0, float(inf.get('bioler_gen', 0.0)))
+            boiler += max(0.0, float(inf.get('P_boiler_e', 0.0)))
             m_buy_MWh += float(inf.get('market_buy_MWh', 0.0))
             grid_buy_MWh += float(inf.get('grid_buy_MWh', 0.0))
             dump_MWh += float(inf.get('surplus_dump_MWh', 0.0))
@@ -95,6 +100,7 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
         agg['renew'][h] = R
         agg['bat_dis'][h] = bat_dis
         agg['boiler'][h] = boiler
+        agg['P_CHP_e'][h] = P_CHP_e
         agg['market_buy'][h] = m_buy_MWh / max(1e-9, dt_hours)
         agg['grid_buy'][h] = grid_buy_MWh / max(1e-9, dt_hours)
         agg['surplus_dump'][h] = dump_MWh / max(1e-9, dt_hours)
@@ -131,7 +137,7 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
 
     hours = 24
     per = {a: {k: np.zeros(hours, dtype=np.float32) for k in [
-        'demand','renew','bat_dis','boiler','market_buy','grid_buy','surplus_dump']}
+        'demand','renew','bat_dis','boiler','P_CHP_e','market_buy','grid_buy','surplus_dump']}
         for a in agents}
 
     for h in range(hours):
@@ -145,7 +151,8 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
             per[aid]['renew'][h] = float(inf.get('newpower_gen', 0.0))
             p_bat = float(inf.get('p_bat', 0.0))
             per[aid]['bat_dis'][h] =  p_bat
-            per[aid]['boiler'][h] = max(0.0, float(inf.get('bioler_gen', 0.0)))
+            per[aid]['boiler'][h] = max(0.0, float(inf.get('P_boiler_e', 0.0)))
+            per[aid]['P_CHP_e'][h] = max(0.0, float(inf.get('P_CHP_e', 0.0)))
             per[aid]['market_buy'][h] = float(inf.get('market_buy_MWh', 0.0)) / max(1e-9, dt_hours)
             per[aid]['grid_buy'][h] = float(inf.get('grid_buy_MWh', 0.0)) / max(1e-9, dt_hours)
             per[aid]['surplus_dump'][h] = float(inf.get('surplus_dump_MWh', 0.0)) / max(1e-9, dt_hours)
@@ -169,15 +176,17 @@ def plot_daily_stack(agg: Dict[str, np.ndarray],
     s1 = agg['renew']
     s2 = agg['bat_dis']
     s3 = agg['boiler']
-    s4 = agg['market_buy']
-    s5 = agg['grid_buy']
+    s4 = agg['P_CHP_e']
+    s5 = agg['market_buy']
+    s6 = agg['grid_buy']
 
     fig, ax = plt.subplots(figsize=(14, 5))
     ax.bar(x, s1, label='可再生出力', width=0.8)
     ax.bar(x, s2, bottom=s1, label='电池放电', width=0.8)
     ax.bar(x, s3, bottom=s1 + s2, label='锅炉发电', width=0.8)
-    ax.bar(x, s4, bottom=s1 + s2 + s3, label='内部购电', width=0.8)
-    ax.bar(x, s5, bottom=s1 + s2 + s3 + s4, label='外网购电', width=0.8)
+    ax.bar(x, s4, bottom=s1 + s2 + s3, label='热电联产', width=0.8)
+    ax.bar(x, s5, bottom=s1 + s2 + s3 + s4, label='内部购电', width=0.8)
+    ax.bar(x, s6, bottom=s1 + s2 + s3 + s4 + s5, label='外网购电', width=0.8)
     ax.plot(x, agg['demand'], linestyle='--', linewidth=2.0, label='需求（L）')
 
     ax.set_xticks(x)
@@ -200,14 +209,15 @@ def plot_daily_stack_per_agent(per: Dict[str, Dict[str, np.ndarray]],
     for aid, dd in per.items():
         hours = len(dd['demand'])
         x = np.arange(hours)
-        s1, s2, s3, s4, s5 = dd['renew'], dd['bat_dis'], dd['boiler'], dd['market_buy'], dd['grid_buy']
+        s1, s2, s3, s4, s5 ,s6 = dd['renew'], dd['bat_dis'], dd['boiler'], dd['P_CHP_e'],dd['market_buy'], dd['grid_buy']
 
         fig, ax = plt.subplots(figsize=(14, 5))
         ax.bar(x, s1, label='可再生出力', width=0.8)
         ax.bar(x, s2, bottom=s1, label='电池放电', width=0.8)
         ax.bar(x, s3, bottom=s1 + s2, label='锅炉发电', width=0.8)
-        ax.bar(x, s4, bottom=s1 + s2 + s3, label='内部购电', width=0.8)
-        ax.bar(x, s5, bottom=s1 + s2 + s3 + s4, label='外网购电', width=0.8)
+        ax.bar(x, s4, bottom=s1 + s2 + s3, label='热电联产', width=0.8)
+        ax.bar(x, s5, bottom=s1 + s2 + s3 + s4, label='内部购电', width=0.8)
+        ax.bar(x, s6, bottom=s1 + s2 + s3 + s4 + s5, label='外网购电', width=0.8)
         ax.plot(x, dd['demand'], linestyle='--', linewidth=2.0, label='需求（L）')
 
         ax.set_xticks(x)
@@ -239,7 +249,7 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
     fig.suptitle(title)
 
     # 统一图例元素名
-    legend_labels = ['可再生出力','电池放电','锅炉发电','内部购电','外网购电','需求（L）']
+    legend_labels = ['可再生出力','电池放电','锅炉发电','热点联产','内部购电','外网购电','需求（L）']
     handles_sample = None
 
     for idx, aid in enumerate(agent_ids):
@@ -248,17 +258,18 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
         dd = per[aid]
         hours = len(dd['demand'])
         x = np.arange(hours)
-        s1, s2, s3, s4, s5 = dd['renew'], dd['bat_dis'], dd['boiler'], dd['market_buy'], dd['grid_buy']
+        s1, s2, s3, s4, s5 ,s6= dd['renew'], dd['bat_dis'], dd['boiler'], dd['P_CHP_e'],dd['market_buy'], dd['grid_buy']
 
         h1 = ax.bar(x, s1, width=0.8)
         h2 = ax.bar(x, s2, bottom=s1, width=0.8)
         h3 = ax.bar(x, s3, bottom=s1 + s2, width=0.8)
-        h4 = ax.bar(x, s4, bottom=s1 + s2 + s3, width=0.8)
+        h4 = ax.bar(x, s4, bottom=s1 + s2 + s3,  width=0.8)
         h5 = ax.bar(x, s5, bottom=s1 + s2 + s3 + s4, width=0.8)
+        h6 = ax.bar(x, s6, bottom=s1 + s2 + s3 + s4 + s5, width=0.8)
         l6, = ax.plot(x, dd['demand'], linestyle='--', linewidth=2.0)
 
         if handles_sample is None:
-            handles_sample = [h1, h2, h3, h4, h5, l6]
+            handles_sample = [h1, h2, h3, h4, h5, h6,l6]
 
         ax.set_xticks(x)
         ax.set_xticklabels([f"{h:02d}:00" for h in range(hours)])
@@ -286,8 +297,8 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
 # Main entry: evaluation + plot
 # ----------------------------
 def test_model_and_plot(algo:str="iddpg",
-                        train_days: int = 31,
-                        test_days: int = 1,
+                        train: int = 31,
+                        test: int = 1,
                         plot_day_offset: int = 0,
                         gamma: float = 0.99,
                         tau: float = 0.01,
@@ -299,38 +310,15 @@ def test_model_and_plot(algo:str="iddpg",
     3) 从测试集选定的一天（plot_day_offset）绘制 24 小时堆叠柱图
     """
     # === 数据切分 ===
-    data = load_power_data("./data/GridSet_no_pred.csv")
-    T = len(data[0]["P"])  # 每个园区长度一致
-
-    train_idx = train_days * 24
-    test_idx = (train_days + test_days) * 24
-
-    train_series = [{k: v[:train_idx] for k, v in d.items()} for d in data]
-    test_series = [{k: v[train_idx:test_idx] for k, v in d.items()} for d in data]
-
-    # === 环境 ===
-    env = MultiBatteryCoordinator(
-        train_series,
-        n_agents=4,
-        dt_hours=1.0,
-        E_bat_MWh=10000.0,
-        P_bat_max_MW=5000.0,
-        eta_ch=0.95, eta_dis=0.95,
-        soc_min=0.1, soc_max=0.9, soc_init=0.1,
-        deg_cost_per_MW=0.1,
-        obs_norm=True,
+    #data = load_power_data("./data/GridSet_no_pred.csv")
+    presets = default_presets()  # 'weekly' / 'fast_debug' / 'monthly'
+    train_series, test_series, T, train_idx, test_idx = load_series_split(
+        path1="./data/IES_data/G_demand.csv",
+        path2="./data/IES_data/H_demand.csv",
+        train_days=train,
+        test_days=test
     )
-    test_env = MultiBatteryCoordinator(
-        test_series,
-        n_agents=4,
-        dt_hours=1.0,
-        E_bat_MWh=10000.0,
-        P_bat_max_MW=5000.0,
-        eta_ch=0.95, eta_dis=0.95,
-        soc_min=0.1, soc_max=0.9, soc_init=0.1,
-        deg_cost_per_MW=0.1,
-        obs_norm=True,
-    )
+    env, test_env = build_envs(train_series, test_series, presets.env_kwargs)
 
     # === Agent ===
     obs, _ = test_env.reset()
@@ -396,7 +384,7 @@ if __name__ == "__main__":
     # 添加参数
     parser.add_argument('--algo', type=str, default='maddpg',
                         help='算法名称，默认是maddpg')
-    parser.add_argument('--train_days', type=int, default=31 * 12,
+    parser.add_argument('--train_days', type=int, default=30 * 11,
                         help='训练天数，默认是31*12')
     parser.add_argument('--test_days', type=int, default=4,
                         help='测试天数，默认是4')
@@ -409,8 +397,8 @@ if __name__ == "__main__":
     # 调用函数并传递参数
     _,re=test_model_and_plot(
         algo=args.algo,
-        train_days=args.train_days,
-        test_days=args.test_days,
+        train=args.train_days,
+        test=args.test_days,
         plot_day_offset=args.plot_day_offset
     )
     print(sum(re))

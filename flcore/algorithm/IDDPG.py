@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import copy
 import torch
+import os
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
@@ -233,9 +234,12 @@ class IDDPG:
 
     # 保存 / 加载（对齐 MADDPG）
     def save(self, prefix="iddpg",Fed=False):
+        file_path = f"./model_pth/{prefix}"
+        if not os.path.exists(file_path):
+            os.makedirs(file_path)
         for i in range(self.n_agents):
-            torch.save(self.actors[i].state_dict(), f"./model_pth/{prefix}/{Fed}_actor_{i}.pth")
-            torch.save(self.critics[i].state_dict(), f"./model_pth/{prefix}/{Fed}_critic_{i}.pth")
+            torch.save(self.actors[i].state_dict(), f"{file_path}/{Fed}_actor_{i}.pth")
+            torch.save(self.critics[i].state_dict(), f"{file_path}/{Fed}_critic_{i}.pth")
 
     def load(self, prefix="iddpg",Fed=False):
         for i in range(self.n_agents):
