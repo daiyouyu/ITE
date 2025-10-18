@@ -1,4 +1,4 @@
-import matplotlib.pyplot as plt
+
 import numpy as np
 import os
 #导入算法
@@ -6,15 +6,7 @@ from flcore.train.train_ddpg import train_ddpg
 from flcore.train.train_iddpg import train_iddpg
 from flcore.train.train_maddpg import train_maddpg
 
-def draw_result(rewards_record):
-    # plot
-    for idx,reward in enumerate(rewards_record):
-        plt.plot(reward,label=str(idx))
-    plt.title("p_bat")
-    plt.xlabel("Episode")
-    plt.ylabel("SumReward")
-    plt.legend()
-    plt.show()
+
 
     # save models
     # maddpg.save(prefix="maddpg_simple_adv")
@@ -29,8 +21,6 @@ if __name__ == "__main__":
     re1 =re1.T
     re2 = np.array(re2)
     re2 = re2.T
-    draw_result(re1)
-    draw_result(re2)
 
     re1_array = np.array(re1)
     re2_array = np.array(re2)

@@ -297,6 +297,7 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
 # Main entry: evaluation + plot
 # ----------------------------
 def test_model_and_plot(algo:str="iddpg",
+                        Fed:bool = False,
                         train: int = 31,
                         test: int = 1,
                         plot_day_offset: int = 0,
@@ -342,7 +343,7 @@ def test_model_and_plot(algo:str="iddpg",
             gamma=gamma, tau=tau,
             batch_size=batch_size, buffer_size=buffer_size
         )
-    model.load(Fed=False)
+    model.load(Fed=Fed)
     # === 先做一次完整测试集评估（可选）===
     test_rewards = []
     test_obs, _ = test_env.reset()
@@ -384,6 +385,8 @@ if __name__ == "__main__":
     # 添加参数
     parser.add_argument('--algo', type=str, default='maddpg',
                         help='算法名称，默认是maddpg')
+    parser.add_argument('--Federated', type=str, default='False',
+                        help='是否开启联邦学习')
     parser.add_argument('--train_days', type=int, default=30 * 11,
                         help='训练天数，默认是31*12')
     parser.add_argument('--test_days', type=int, default=4,
@@ -396,9 +399,10 @@ if __name__ == "__main__":
 
     # 调用函数并传递参数
     _,re=test_model_and_plot(
-        algo=args.algo,
-        train=args.train_days,
-        test=args.test_days,
-        plot_day_offset=args.plot_day_offset
+        algo = args.algo,
+        Fed = args.Federated,
+        train = args.train_days,
+        test = args.test_days,
+        plot_day_offset = args.plot_day_offset
     )
     print(sum(re))

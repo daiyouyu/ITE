@@ -135,7 +135,7 @@ def load_ITE_data(
 
     wind_1H  = h_wind.resample(out_freq).agg(agg).sum(axis=1)
     solar_1H = h_solar.resample(out_freq).agg(agg).sum(axis=1)
-    r_1H = wind_1H.add(solar_1H, fill_value=0.0)
+    #r_1H = wind_1H.add(solar_1H, fill_value=0.0)
 
     price_1H = None
     if price_series is not None:
@@ -145,7 +145,7 @@ def load_ITE_data(
     idx = g_res_1H.index
     for s in [g_ind_1H,g_com_1H,g_pub_1H,
               h_res_1H,h_ind_1H,h_com_1H,h_pub_1H,
-              r_1H]:
+              wind_1H,solar_1H]:
         idx = idx.intersection(s.index)
     if price_1H is not None:
         idx = idx.intersection(price_1H.index)
@@ -160,7 +160,8 @@ def load_ITE_data(
     h_com_1H = h_com_1H.reindex(idx)
     h_pub_1H = h_pub_1H.reindex(idx)
 
-    r_1H = r_1H.reindex(idx)
+    wind_1H = wind_1H.reindex(idx)
+    solar_1H = solar_1H.reindex(idx)
     if price_1H is not None:
         price_1H = price_1H.reindex(idx)
 
@@ -182,10 +183,10 @@ def load_ITE_data(
     ])
 
     # 可再生功率 (4, T) —— 你原来等比复制
-    R = np.vstack([r_1H.values*0.5,
-                   r_1H.values*0.5,
-                   r_1H.values*0.5,
-                   r_1H.values*0.5])
+    R = np.vstack([wind_1H.values*3 + solar_1H,
+                   wind_1H.values + solar_1H*0.5,
+                   wind_1H.values*3 + solar_1H,
+                   wind_1H.values*3 + solar_1H])
 
     # 电价 (4, T)
     if price_1H is not None:

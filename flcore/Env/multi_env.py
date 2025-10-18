@@ -14,11 +14,11 @@ class BatteryEnvSingle(gym.Env):
 
     def __init__(self,
                  dt_hours=1.0,
-                 E_bat_MWh=3.0,
-                 P_bat_max_MW=1.0,
+                 E_bat_MWh=15.0,
+                 P_bat_max_MW=10.0,
                  eta_ch=0.95, eta_dis=1.05,
                  soc_min=0.1, soc_max=0.9, soc_init=0.1,
-                 deg_cost_per_MW=7,
+                 deg_cost_per_MW=2,
                  penalty_soc=0.0,
                  episode_len=24,          # 由协调器传全局长度
                  obs_norm=True,           # 仍保留，便于后续扩展
@@ -43,6 +43,7 @@ class BatteryEnvSingle(gym.Env):
         self.episode_len = int(episode_len)
         self._t = 0
         self._soc = float(self.soc_init)
+        self._hsoc = float(self.soc_init)
 
         # 随机性（每个 agent 独立 RNG）
         self._rng = np.random.default_rng(seed)
@@ -109,18 +110,8 @@ class BatteryEnvSingle(gym.Env):
 
         # 1) 电池动作缩放
         a = float(np.clip(action[0], -1.0, 1.0))
-        a = (a + 1) / 2               #调整到 0~1
-        if self.P_es >= 0 and self._soc < self.soc_max:
-            self.P_es = min(a * self.Pmax,(self.soc_max-self._soc) * self.E/self.eta_ch)
-            eta = self.eta_ch
-        else:
-            self.P_es = max(a * -self.Pmax, (self.soc_min - self._soc) * self.E / self.eta_dis)
-            eta = self.eta_dis
-        soc =  (eta * self.P_es)/self.E
-        self._soc = soc+self._soc
-
+        self._soc_block(a)
         # 锅炉动作
-
         boiler_a = float(np.clip(action[1], -1.0, 1.0))
         fuel_kgph, P_boiler_e = self._boiler_block(boiler_a)
         # CHP动作
@@ -209,6 +200,24 @@ class BatteryEnvSingle(gym.Env):
         }
         return obs_next, float(reward_placeholder), bool(done), False, info
 
+    def _soc_block(self,a):
+        a = (a + 1) / 2  # 调整到 0~1
+        if self.P_es >= 0 and self._soc < self.soc_max:
+            self.P_es = min(a * self.Pmax, (self.soc_max - self._soc) * self.E / self.eta_ch)
+            eta = self.eta_ch
+        else:
+            self.P_es = max(a * -self.Pmax, (self.soc_min - self._soc) * self.E / self.eta_dis)
+            eta = self.eta_dis
+        soc = (eta * self.P_es) / self.E
+        self._soc = soc + self._soc
+
+    def _H_restore_block(self,a_ch,a_dis):
+        a_ch = (float(np.clip(a_ch, -1.0, 1.0)) + 1.0) / 2.0
+        a_dis = (float(np.clip(a_dis, -1.0, 1.0)) + 1.0) / 2.0
+        eta = 0.02
+        P_ch = 0.3
+        P_dis = 0.3
+        self._hsoc = (1-eta)*self._hsoc + (P_ch*a_ch- P_dis/a_dis)
     def _boiler_block(self,  a_norm: float):
         u = (float(np.clip(a_norm, -1.0, 1.0)) + 1.0) / 2.0  # u∈[0,1]
         u = max(0.0, 2.0 * (u - 0.1))  # 去中心：u=0.5 -> 0，u=1->1，u=0->0
