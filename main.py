@@ -15,15 +15,19 @@ from flcore.train.train_maddpg import train_maddpg
 
 if __name__ == "__main__":
     #re1,test_re = train_maddpg(episodes=100,train = 7  , test = 1 ,Federated = True)
-    re1, test_re = train_maddpg(episodes=5, train = 1 , test = 1, Federated = False)
-    re2, test_re = train_maddpg(episodes=5, train = 1 , test = 1 ,Federated = True)
-    re1 = np.array(re1)
-    re1 =re1.T
-    re2 = np.array(re2)
-    re2 = re2.T
+    iddpg, test_re = train_iddpg(episodes=5, train = 1 , test = 1, Federated = False)
+    Fed_iddpg, test_re = train_iddpg(episodes=5, train = 1 , test = 1 ,Federated = True)
+    maddpg, test_re = train_maddpg(episodes=5, train=1, test=1, Federated=False)
+    Fed_maddpg, test_re = train_maddpg(episodes=5, train=1, test=1, Federated=True)
 
-    re1_array = np.array(re1)
-    re2_array = np.array(re2)
+    re1 = np.array(iddpg).T
+    re2 = np.array(Fed_iddpg).T
+    re3 = np.array(maddpg).T
+    re4 = np.array(Fed_maddpg).T
+    iddpg = np.array(re1)
+    Fed_iddpg = np.array(re2)
+    maddpg = np.array(re3)
+    Fed_maddpg = np.array(re4)
     # 指定保存目录（例如当前目录下的 'data' 文件夹）
     save_dir = './result'
 
@@ -35,4 +39,4 @@ if __name__ == "__main__":
     file_path = os.path.join(save_dir, 'result_arrays')
 
     # 保存到指定目录
-    np.savez(file_path, array1=re1_array, array2=re2_array)
+    np.savez(file_path, iddpg=iddpg, Fed_iddpg=Fed_iddpg, maddpg=maddpg,Fed_maddpg = Fed_maddpg)

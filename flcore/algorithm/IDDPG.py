@@ -69,6 +69,7 @@ class IDDPG:
 
         # 初始化每个 agent 的网络
         for i in range(self.n_agents):
+
             actor = Actor(obs_dims[i], action_dims[i], max_actions[i]).to(device)
             actor_t = copy.deepcopy(actor).to(device)
             opt_a = optim.Adam(actor.parameters(), lr=lr_actor)

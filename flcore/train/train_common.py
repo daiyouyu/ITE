@@ -43,6 +43,36 @@ def default_presets() -> Presets:
         dt_hours=1.0,
         deg_cost_per_MW=1,
         obs_norm=True,
+        # === 新增：逐 agent 覆盖 ===
+        per_agent_kwargs={
+            "agent_0": {"E_bat_MWh": 10.0, "P_bat_max_MW": 6.0, "deg_cost_per_MW": 1.0,
+                        "CHP_a" : 0.76,"CHP_b" : 0.4275,"CHP_c" : 0.114,
+                        "CHP_d" : 271.6,"CHP_e" : 203.7,"CHP_f" : 75,
+                        "Fbmax" : 2, "cf" : 612,
+                        "P_HB_e_h" : 15,"P_HB_e_l" : 0,
+                        },
+
+            "agent_1": {"E_bat_MWh": 20.0, "P_bat_max_MW": 8.0, "deg_cost_per_MW": 1.5,
+                        "CHP_a": 0.6, "CHP_b": 0.5, "CHP_c": 0.108,
+                        "CHP_d": 229.2, "CHP_e": 171.9, "CHP_f": 75,
+                        "Fbmax": 1, "cf": 650,
+                        "P_HB_e_h": 5, "P_HB_e_l": 1,
+                        },
+
+            "agent_2": {"E_bat_MWh": 30.0, "P_bat_max_MW": 12.0, "deg_cost_per_MW": 0.8,
+                        "CHP_a" : 0.76,"CHP_b" : 0.4275,"CHP_c" : 0.114,
+                        "CHP_d" : 271.6,"CHP_e" : 203.7,"CHP_f" : 75,
+                        "Fbmax": 2, "cf": 612,
+                        "P_HB_e_h": 15, "P_HB_e_l": 0,
+                        },
+
+            "agent_3": {"E_bat_MWh": 15.0, "P_bat_max_MW": 5.0, "deg_cost_per_MW": 2.0,
+                        "CHP_a" : 0.76,"CHP_b" : 0.4275,"CHP_c" : 0.114,
+                        "CHP_d" : 271.6,"CHP_e" : 203.7,"CHP_f" : 75,
+                        "Fbmax": 2, "cf": 612,
+                        "P_HB_e_h": 15, "P_HB_e_l": 0,
+                        },
+        },
     )
 
     algo_kwargs = dict(

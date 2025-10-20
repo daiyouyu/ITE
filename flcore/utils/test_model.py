@@ -368,7 +368,7 @@ def test_model_and_plot(algo:str="iddpg",
     # 分智能体：各出一张图
     per = rollout_one_day_per_agent(test_env, model, agents, day_start_idx=day_start, dt_hours=1.0)
     saved_files = plot_daily_stack_per_agent(per, save_dir=f"./result/{algo}", filename_prefix="daily_agent_")
-    grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"./result/{algo}/daily_agents_grid.png",
+    grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"./result/{algo}/daily_agents_Fed{Fed}.png",
                                                 title=f"测试集第 {plot_day_offset+1} 天：各智能体日内需求与供给（MW）")
 
     print("Saved plot -> daily_supply_stack.png")

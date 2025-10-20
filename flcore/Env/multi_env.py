@@ -22,6 +22,19 @@ class BatteryEnvSingle(gym.Env):
                  penalty_soc=0.0,
                  episode_len=24,          # 由协调器传全局长度
                  obs_norm=True,           # 仍保留，便于后续扩展
+                 #锅炉参数
+                 Fbmax = 2,
+                 cf = 612,
+                 #chp参数
+                 CHP_a = 0.72,
+                 CHP_b = 0.405,
+                 CHP_c = 0.108,
+                 CHP_d = 229.2,
+                 CHP_e = 171.9,
+                 CHP_f = 75,
+                 #HB参数
+                 P_HB_e_h = 15,
+                 P_HB_e_l = 0,
                  seed: int | None = None,
                  ):
         super().__init__()
@@ -36,8 +49,21 @@ class BatteryEnvSingle(gym.Env):
         self.penalty_soc = float(penalty_soc)
         self.obs_norm = bool(obs_norm)
         # 锅炉参数
-        self.Fbmax = 2
+        self.Fbmax = Fbmax
         self.LHV = 5.8111
+        self.cf = cf
+
+        # CHP参数
+        self.CHP_a = CHP_a
+        self.CHP_b = CHP_b
+        self.CHP_c = CHP_c
+        self.CHP_d = CHP_d
+        self.CHP_e = CHP_e
+        self.CHP_f = CHP_f
+
+        # HB参数
+        self.P_HB_e_h = P_HB_e_h
+        self.P_HB_e_l = P_HB_e_l
 
         # 时序（由协调器控制，这里只作回合步计数）
         self.episode_len = int(episode_len)
@@ -218,6 +244,7 @@ class BatteryEnvSingle(gym.Env):
         P_ch = 0.3
         P_dis = 0.3
         self._hsoc = (1-eta)*self._hsoc + (P_ch*a_ch- P_dis/a_dis)
+
     def _boiler_block(self,  a_norm: float):
         u = (float(np.clip(a_norm, -1.0, 1.0)) + 1.0) / 2.0  # u∈[0,1]
         u = max(0.0, 2.0 * (u - 0.1))  # 去中心：u=0.5 -> 0，u=1->1，u=0->0
@@ -228,9 +255,9 @@ class BatteryEnvSingle(gym.Env):
         return M_bfw, p_gen
 
     def _boiler_cost(self,fuel_kgph,P_boiler_e):
-        cf = 612
+
         gf = 0.8325
-        boiler_cost = cf * fuel_kgph  + gf * self.cco2 * P_boiler_e
+        boiler_cost = self.cf * fuel_kgph  + gf * self.cco2 * P_boiler_e
         return boiler_cost
     #定义热电联产模块
     def _CHP_block(self,  a_norm: float):
@@ -261,13 +288,11 @@ class BatteryEnvSingle(gym.Env):
 
     # 定义热泵模块
     def _HB_block(self, a_norm: float):
-        # 定义参数
-        P_HB_e_h = 15
-        P_HB_e_l = 0
+
 
         # 获取动作
         u = (float(np.clip(a_norm, -1.0, 1.0)) + 1.0) / 2.0  # u∈[0,1]
-        P_HB_h = u * (P_HB_e_h - P_HB_e_l) + P_HB_e_l
+        P_HB_h = u * (self.P_HB_e_h - self.P_HB_e_l) + self.P_HB_e_l
         return P_HB_h
 
     def _HB_cost(self,HB_h):
@@ -288,7 +313,10 @@ class MultiBatteryCoordinator(gym.Env):
     - step(action_dict): 收集各子环境的 net_power_MW、本地成本，统一做“电力结算”后再给奖励
     - 这里先按“外网电价直接结算”占位；你后续可替换为内部市场出清（式14/15）
     """
-    def __init__(self, series: Dict[str, np.ndarray], n_agents: int, **single_kwargs):
+    def __init__(self, series: Dict[str, np.ndarray],
+                 n_agents: int,
+                 per_agent_kwargs,
+                 **single_kwargs):
         super().__init__()
         self.n_agents = int(n_agents)
         self.agents: List[str] = [f"agent_{i}" for i in range(self.n_agents)]
@@ -307,11 +335,17 @@ class MultiBatteryCoordinator(gym.Env):
 
         # 创建 N 个独立子环境（不再传入 series）
         # episode_len 用全局 T 或你训练时的滑窗长度
-        self.envs: Dict[str, BatteryEnvSingle] = {
-            aid: BatteryEnvSingle(episode_len=self.T, **single_kwargs,
-                                  seed=np.random.randint(1, 10_000_000))
-            for aid in self.agents
-        }
+        # == 构造每个 agent 自己的子环境（支持覆盖参数） ==
+        per_agent_kwargs = per_agent_kwargs or {}
+        self.envs: Dict[str, BatteryEnvSingle] = {}
+        for aid in self.agents:
+            local = dict(single_kwargs)  # 默认参数
+            local.update(per_agent_kwargs.get(aid, {}))  # 逐 agent 覆盖
+            self.envs[aid] = BatteryEnvSingle(
+                episode_len=self.T,
+                **local,
+                seed=np.random.randint(1, 10_000_000)
+            )
 
         # 动作/观测空间字典
         self.observation_spaces: Dict[str, spaces.Box] = {aid: env.observation_space for aid, env in self.envs.items()}
