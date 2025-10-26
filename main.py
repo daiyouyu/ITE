@@ -1,22 +1,18 @@
-
 import numpy as np
 import os
-#导入算法
+# 导入算法
 from flcore.train.train_ddpg import train_ddpg
 from flcore.train.train_iddpg import train_iddpg
 from flcore.train.train_maddpg import train_maddpg
 
-
-
-    # save models
-    # maddpg.save(prefix="maddpg_simple_adv")
-
+# save models
+# maddpg.save(prefix="maddpg_simple_adv")
 
 
 if __name__ == "__main__":
-    #re1,test_re = train_maddpg(episodes=100,train = 7  , test = 1 ,Federated = True)
-    iddpg, test_re = train_iddpg(episodes=5, train = 1 , test = 1, Federated = False)
-    Fed_iddpg, test_re = train_iddpg(episodes=5, train = 1 , test = 1 ,Federated = True)
+    # re1,test_re = train_maddpg(episodes=100,train = 7  , test = 1 ,Federated = True)
+    iddpg, test_re = train_iddpg(episodes=5, train=365, test=0, Federated=False)
+    Fed_iddpg, test_re = train_iddpg(episodes=5, train=1, test=1, Federated=True)
     maddpg, test_re = train_maddpg(episodes=5, train=1, test=1, Federated=False)
     Fed_maddpg, test_re = train_maddpg(episodes=5, train=1, test=1, Federated=True)
 
@@ -39,4 +35,4 @@ if __name__ == "__main__":
     file_path = os.path.join(save_dir, 'result_arrays')
 
     # 保存到指定目录
-    np.savez(file_path, iddpg=iddpg, Fed_iddpg=Fed_iddpg, maddpg=maddpg,Fed_maddpg = Fed_maddpg)
+    np.savez(file_path, iddpg=iddpg, Fed_iddpg=Fed_iddpg, maddpg=maddpg, Fed_maddpg=Fed_maddpg)
