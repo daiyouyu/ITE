@@ -7,7 +7,8 @@ from flcore.utils.print_epreward import format_episode_info
 import numpy as np
 import time
 
-def train_maddpg(episodes=1000,train=7,test=1,Federated=True,):
+
+def train_maddpg(episodes=1000, train=7, test=1, Federated=True, ):
     # --- 统一使用公共预设 ---
     # 使用同一套公共预设
     presets = default_presets()  # 'weekly' / 'fast_debug' / 'monthly'
@@ -55,7 +56,7 @@ def train_maddpg(episodes=1000,train=7,test=1,Federated=True,):
             } for a in range(len(agents))
         }
 
-        horizon = max(1, test_idx)
+        horizon = max(1, len(train_idx))
         for t in range(horizon):
             obs_list = list_by_agents(obs, agents)
 
@@ -114,9 +115,9 @@ def train_maddpg(episodes=1000,train=7,test=1,Federated=True,):
         # 与原实现保持一致的“按小时归一后*24”的口径
         rewards.append((ep_rew / max(1, t)) * 24)
         ep_time = (time.time() - start_time) / 60
-        print(f"当前轮次时间: {ep_time:.3f}分钟,预计剩余时间：{ep_time * (episodes-ep):.3f}")
+        print(f"当前轮次时间: {ep_time:.3f}分钟,预计剩余时间：{ep_time * (episodes - ep):.3f}")
         print(format_episode_info(ep, (ep_rew / max(1, t)) * 24, ep_info[0]))
 
     env.close()
-    maddpg.save("maddpg",Fed = Federated)
+    maddpg.save("maddpg", Fed=Federated)
     return rewards, test_rewards

@@ -8,7 +8,8 @@ from flcore.train.train_common import (
 from flcore.algorithm.IDDPG import IDDPG
 from flcore.utils.print_epreward import format_episode_info
 
-def train_iddpg(episodes=1000,train=7,test=1,Federated=True,):
+
+def train_iddpg(episodes=1000, train=7, test=1, Federated=True, ):
     # 使用同一套公共预设
     presets = default_presets()  # 'weekly' / 'fast_debug' / 'monthly'
     train_series, test_series, T, train_idx, test_idx = load_series_split(
@@ -36,20 +37,20 @@ def train_iddpg(episodes=1000,train=7,test=1,Federated=True,):
 
         ep_info = {
             a: {
-                "G_demand_MWH":0.0,
-                "p_bat_MWh":0.0,
-                "market_buy_MWh":0.0,
-                "market_sell_MWh":0.0,
-                "newpower_MWh":0.0,
-                "e_grid_buy_MWh":0.0,
-                "P_boiler_e_MWh":0.0,
-                "P_CHP_e_MWh":0.0,
+                "G_demand_MWH": 0.0,
+                "p_bat_MWh": 0.0,
+                "market_buy_MWh": 0.0,
+                "market_sell_MWh": 0.0,
+                "newpower_MWh": 0.0,
+                "e_grid_buy_MWh": 0.0,
+                "P_boiler_e_MWh": 0.0,
+                "P_CHP_e_MWh": 0.0,
                 "h_demand_MWH": 0.0,
                 "h_grid_buy_MWh": 0.0,
                 "P_CHP_h_MWh": 0.0,
                 "P_HB_h_MWh": 0.0,
-                "soc_cost":0.0,
-                "boiler_cost":0.0,
+                "soc_cost": 0.0,
+                "boiler_cost": 0.0,
                 "CHP_cost": 0.0,
                 "HB_cost": 0.0,
                 "market_cost": 0.0,
@@ -57,7 +58,7 @@ def train_iddpg(episodes=1000,train=7,test=1,Federated=True,):
         }
 
         # 统一按“一个评估窗口长度”推进（用 test_idx 作自然长度）
-        horizon = max(1, test_idx)
+        horizon = max(1, len(train_idx))
         for t in range(horizon):
             obs_list = list_by_agents(obs, agents)
             if t < presets.noise_warmup_steps:
@@ -80,7 +81,7 @@ def train_iddpg(episodes=1000,train=7,test=1,Federated=True,):
             iddpg.replay.add(joint_obs, joint_act, rew_list, joint_next_obs, done_list)
             if t % 3 == 0:
                 iddpg.update()
-            if Federated :
+            if Federated:
                 if t % 24 == 0:
                     iddpg.Fed_Aggergate()
             obs = next_obs
@@ -114,9 +115,9 @@ def train_iddpg(episodes=1000,train=7,test=1,Federated=True,):
         # 与原实现保持一致的“按小时归一后*24”的口径
         rewards.append((ep_rew / max(1, t)) * 24)
         ep_time = (time.time() - start_time) / 60
-        print(f"当前轮次时间: {ep_time:.3f}分钟,预计剩余时间：{ep_time * (episodes-ep):.3f}")
+        print(f"当前轮次时间: {ep_time:.3f}分钟,预计剩余时间：{ep_time * (episodes - ep):.3f}")
         print(format_episode_info(ep, (ep_rew / max(1, t)) * 24, ep_info[0]))
 
     env.close()
-    iddpg.save("iddpg",f"{Federated}")
+    iddpg.save("iddpg", f"{Federated}")
     return rewards, test_rewards
