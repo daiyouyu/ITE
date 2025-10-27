@@ -6,11 +6,11 @@ from matplotlib import font_manager
 # ==== 中文字体配置（解决 DejaVu Sans 缺少 CJK 的告警）====
 # 优先尝试系统已安装字体；若存在则注册并设置为默认
 _preferred_fonts = [
-    r"C:\Windows\Fonts\msyh.ttc",   # 微软雅黑（Windows）
-    r"C:\Windows\Fonts\simhei.ttf", # 黑体（Windows）
+    r"C:\Windows\Fonts\msyh.ttc",  # 微软雅黑（Windows）
+    r"C:\Windows\Fonts\simhei.ttf",  # 黑体（Windows）
     r"/System/Library/Fonts/PingFang.ttc",  # 苹方（macOS）
     r"/System/Library/Fonts/STHeiti Light.ttc",
-    r"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", # Noto CJK（Linux 常见）
+    r"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",  # Noto CJK（Linux 常见）
 ]
 for _fp in _preferred_fonts:
     try:
@@ -38,23 +38,26 @@ from flcore.train.train_common import (
 from flcore.algorithm.IDDPG import IDDPG
 from flcore.algorithm.MADDPG import MADDPG
 
+
 # ----------------------------
 # Helpers
 # ----------------------------
 def _flatten(xs: List[np.ndarray]) -> np.ndarray:
     return np.concatenate([np.asarray(x, dtype=np.float32).ravel() for x in xs], axis=0)
 
+
 def _by_agents(d: Dict[str, np.ndarray], agents: List[str]) -> List[np.ndarray]:
     return [d[a] for a in agents]
+
 
 # ----------------------------
 # Evaluation & Plotting
 # ----------------------------
 def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
-                               model,
-                               agents: List[str],
-                               day_start_idx: int,
-                               dt_hours: float = 1.0) -> Dict[str, np.ndarray]:
+                                model,
+                                agents: List[str],
+                                day_start_idx: int,
+                                dt_hours: float = 1.0) -> Dict[str, np.ndarray]:
     """
     聚合版：返回全系统 24 小时的总需求与总供给分量。
     """
@@ -82,8 +85,13 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
         action_dict = {a: acts[i] for i, a in enumerate(agents)}
         next_obs, rew_dict, term_dict, trunc_dict, info_dict = env.step(action_dict)
 
-        L = 0.0; R = 0.0; bat_dis = 0.0; boiler = 0.0
-        m_buy_MWh = 0.0; grid_buy_MWh = 0.0; dump_MWh = 0.0
+        L = 0.0;
+        R = 0.0;
+        bat_dis = 0.0;
+        boiler = 0.0
+        m_buy_MWh = 0.0;
+        grid_buy_MWh = 0.0;
+        dump_MWh = 0.0
         for aid in agents:
             inf = info_dict[aid]
             L += float(inf.get('G_demand', 0.0))
@@ -108,7 +116,7 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
         obs = next_obs
         if all(bool(term_dict[a]) or bool(trunc_dict[a]) for a in agents):
             for k in agg.keys():
-                agg[k] = agg[k][:h+1]
+                agg[k] = agg[k][:h + 1]
             break
 
     return agg
@@ -137,8 +145,8 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
 
     hours = 24
     per = {a: {k: np.zeros(hours, dtype=np.float32) for k in [
-        'demand','renew','bat_dis','boiler','P_CHP_e','market_buy','grid_buy','surplus_dump']}
-        for a in agents}
+        'demand', 'renew', 'bat_dis', 'boiler', 'P_CHP_e', 'market_buy', 'grid_buy', 'surplus_dump']}
+           for a in agents}
 
     for h in range(hours):
         acts = model.select_actions(_by_agents(obs, agents), noise_scale=0.0)
@@ -150,7 +158,7 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
             per[aid]['demand'][h] = float(inf.get('G_demand', 0.0))
             per[aid]['renew'][h] = float(inf.get('newpower_gen', 0.0))
             p_bat = float(inf.get('p_bat', 0.0))
-            per[aid]['bat_dis'][h] =  p_bat
+            per[aid]['bat_dis'][h] = p_bat
             per[aid]['boiler'][h] = max(0.0, float(inf.get('P_boiler_e', 0.0)))
             per[aid]['P_CHP_e'][h] = max(0.0, float(inf.get('P_CHP_e', 0.0)))
             per[aid]['market_buy'][h] = float(inf.get('market_buy_MWh', 0.0)) / max(1e-9, dt_hours)
@@ -161,7 +169,7 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
         if all(bool(term_dict[a]) or bool(trunc_dict[a]) for a in agents):
             for aid in agents:
                 for k in per[aid].keys():
-                    per[aid][k] = per[aid][k][:h+1]
+                    per[aid][k] = per[aid][k][:h + 1]
             break
 
     return per
@@ -209,7 +217,8 @@ def plot_daily_stack_per_agent(per: Dict[str, Dict[str, np.ndarray]],
     for aid, dd in per.items():
         hours = len(dd['demand'])
         x = np.arange(hours)
-        s1, s2, s3, s4, s5 ,s6 = dd['renew'], dd['bat_dis'], dd['boiler'], dd['P_CHP_e'],dd['market_buy'], dd['grid_buy']
+        s1, s2, s3, s4, s5, s6 = dd['renew'], dd['bat_dis'], dd['boiler'], dd['P_CHP_e'], dd['market_buy'], dd[
+            'grid_buy']
 
         fig, ax = plt.subplots(figsize=(14, 5))
         ax.bar(x, s1, label='可再生出力', width=0.8)
@@ -245,11 +254,11 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
     cols = 2 if n > 1 else 1
     rows = math.ceil(n / cols)
 
-    fig, axes = plt.subplots(rows, cols, figsize=(14, 6*rows), squeeze=False)
+    fig, axes = plt.subplots(rows, cols, figsize=(14, 6 * rows), squeeze=False)
     fig.suptitle(title)
 
     # 统一图例元素名
-    legend_labels = ['可再生出力','电池放电','锅炉发电','热点联产','内部购电','外网购电','需求（L）']
+    legend_labels = ['可再生出力', '电池放电', '锅炉发电', '热点联产', '内部购电', '外网购电', '需求（L）']
     handles_sample = None
 
     for idx, aid in enumerate(agent_ids):
@@ -258,18 +267,19 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
         dd = per[aid]
         hours = len(dd['demand'])
         x = np.arange(hours)
-        s1, s2, s3, s4, s5 ,s6= dd['renew'], dd['bat_dis'], dd['boiler'], dd['P_CHP_e'],dd['market_buy'], dd['grid_buy']
+        s1, s2, s3, s4, s5, s6 = dd['renew'], dd['bat_dis'], dd['boiler'], dd['P_CHP_e'], dd['market_buy'], dd[
+            'grid_buy']
 
         h1 = ax.bar(x, s1, width=0.8)
         h2 = ax.bar(x, s2, bottom=s1, width=0.8)
         h3 = ax.bar(x, s3, bottom=s1 + s2, width=0.8)
-        h4 = ax.bar(x, s4, bottom=s1 + s2 + s3,  width=0.8)
+        h4 = ax.bar(x, s4, bottom=s1 + s2 + s3, width=0.8)
         h5 = ax.bar(x, s5, bottom=s1 + s2 + s3 + s4, width=0.8)
         h6 = ax.bar(x, s6, bottom=s1 + s2 + s3 + s4 + s5, width=0.8)
         l6, = ax.plot(x, dd['demand'], linestyle='--', linewidth=2.0)
 
         if handles_sample is None:
-            handles_sample = [h1, h2, h3, h4, h5, h6,l6]
+            handles_sample = [h1, h2, h3, h4, h5, h6, l6]
 
         ax.set_xticks(x)
         ax.set_xticklabels([f"{h:02d}:00" for h in range(hours)])
@@ -278,7 +288,7 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
         ax.grid(axis='y', linestyle=':', alpha=0.6)
 
     # 删除空子图（当 n 不是 rows*cols 时）
-    for k in range(n, rows*cols):
+    for k in range(n, rows * cols):
         r, c = divmod(k, cols)
         fig.delaxes(axes[r][c])
 
@@ -296,8 +306,8 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
 # ----------------------------
 # Main entry: evaluation + plot
 # ----------------------------
-def test_model_and_plot(algo:str="iddpg",
-                        Fed:bool = False,
+def test_model_and_plot(algo: str = "iddpg",
+                        Fed: bool = False,
                         train: int = 31,
                         test: int = 1,
                         plot_day_offset: int = 0,
@@ -311,7 +321,7 @@ def test_model_and_plot(algo:str="iddpg",
     3) 从测试集选定的一天（plot_day_offset）绘制 24 小时堆叠柱图
     """
     # === 数据切分 ===
-    #data = load_power_data("./data/GridSet_no_pred.csv")
+    # data = load_power_data("./data/GridSet_no_pred.csv")
     presets = default_presets()  # 'weekly' / 'fast_debug' / 'monthly'
     train_series, test_series, T, train_idx, test_idx = load_series_split(
         path1="./data/IES_data/G_demand.csv",
@@ -335,7 +345,7 @@ def test_model_and_plot(algo:str="iddpg",
             batch_size=batch_size, buffer_size=buffer_size
         )
         # 假设本地已有训练权重
-        
+
     elif algo == "maddpg":
         model = MADDPG(
             obs_dims, action_dims, max_actions,
@@ -348,7 +358,7 @@ def test_model_and_plot(algo:str="iddpg",
     test_rewards = []
     test_obs, _ = test_env.reset()
     ep_rew = np.zeros(len(agents), dtype=np.float32)
-    for _ in range(test_idx - train_idx):
+    for _ in range(len(test_idx)):
         al = model.select_actions(_by_agents(test_obs, agents), noise_scale=0.0)
         nd = {a: al[i] for i, a in enumerate(agents)}
         test_next_obs, test_rew_dict, test_term_dict, test_trunc_dict, _info = test_env.step(nd)
@@ -362,14 +372,14 @@ def test_model_and_plot(algo:str="iddpg",
     # 该天在测试集内的起始索引（相对 test_env）
     day_start = plot_day_offset * 24
     agg = rollout_one_day_and_collect(test_env, model, agents, day_start_idx=day_start, dt_hours=1.0)
-    plot_daily_stack(agg, title=f"测试集第 {plot_day_offset+1} 天：用电与供给堆叠图（MW）",
+    plot_daily_stack(agg, title=f"测试集第 {plot_day_offset + 1} 天：用电与供给堆叠图（MW）",
                      save_path=f"./result/{algo}/daily_supply_stack.png")
 
     # 分智能体：各出一张图
     per = rollout_one_day_per_agent(test_env, model, agents, day_start_idx=day_start, dt_hours=1.0)
     saved_files = plot_daily_stack_per_agent(per, save_dir=f"./result/{algo}", filename_prefix="daily_agent_")
     grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"./result/{algo}/daily_agents_Fed{Fed}.png",
-                                                title=f"测试集第 {plot_day_offset+1} 天：各智能体日内需求与供给（MW）")
+                                                title=f"测试集第 {plot_day_offset + 1} 天：各智能体日内需求与供给（MW）")
 
     print("Saved plot -> daily_supply_stack.png")
     print(f"Saved plot -> {grid_path}")
@@ -398,11 +408,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # 调用函数并传递参数
-    _,re=test_model_and_plot(
-        algo = args.algo,
-        Fed = args.Federated,
-        train = args.train_days,
-        test = args.test_days,
-        plot_day_offset = args.plot_day_offset
+    _, re = test_model_and_plot(
+        algo=args.algo,
+        Fed=args.Federated,
+        train=args.train_days,
+        test=args.test_days,
+        plot_day_offset=args.plot_day_offset
     )
     print(sum(re))
