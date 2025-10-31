@@ -1,4 +1,3 @@
-
 import copy
 import torch
 import os
@@ -8,14 +7,15 @@ import torch.nn.functional as F
 import random
 import numpy as np
 from collections import deque
-#导入模型
-from flcore.Model import Actor,Critic
+# 导入模型
+from flcore.Model import Actor, Critic
 
 # ----------------------------
 # MADDPG agent wrapper
 # ----------------------------
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 # ----------------------------
 # Replay buffer (joint)
@@ -44,6 +44,7 @@ class JointReplayBuffer:
 
     def size(self):
         return len(self.buffer)
+
 
 class MADDPG:
     def __init__(self, obs_dims, action_dims, max_actions,
@@ -163,7 +164,7 @@ class MADDPG:
                 # compute target Q using agent i's critic_target
                 q_next = self.critic_targets[i](next_obs_b_t, next_actions_cat)
                 # reward for agent i: rews_b_t[:, i:i+1]
-                td_target = rews_b_t[:, i:i+1] + (1.0 - dones_b_t[:, i:i+1]) * (self.gamma * q_next)
+                td_target = rews_b_t[:, i:i + 1] + (1.0 - dones_b_t[:, i:i + 1]) * (self.gamma * q_next)
 
             # current Q
             q_curr = self.critics[i](obs_b_t, acts_b_t)
@@ -176,7 +177,7 @@ class MADDPG:
             # Actor update (policy gradient)
             # --------------------
             obs_splits = torch.split(obs_b_t, self.obs_dims, dim=1)
-            protos=[]
+            protos = []
             curr_actions = []
 
             for j in range(self.n_agents):
@@ -203,7 +204,6 @@ class MADDPG:
             actor_loss.backward()
             self.actor_opts[i].step()
 
-
             # --------------------
             # Soft update targets for this agent (actor + critic)
             # --------------------
@@ -214,7 +214,7 @@ class MADDPG:
                 p_t.data.copy_(self.tau * p.data + (1.0 - self.tau) * p_t.data)
 
     def Fed_Aggergate(self):
-        Federated_w = [[],[],[],[],[]]
+        Federated_w = [[], [], [], [], []]
 
         if self.replay.size() < self.batch_size:
             return
@@ -230,7 +230,7 @@ class MADDPG:
             avg = torch.stack(hist, dim=0).mean(dim=0).to(device)  # (Feat,)
             avg_proto.append(avg)
 
-        obs_b,  _, _, _, _ = self.replay.sample(self.batch_size)
+        obs_b, _, _, _, _ = self.replay.sample(self.batch_size)
 
         obs_b_t = torch.FloatTensor(obs_b).to(device)
         obs_splits = torch.split(obs_b_t, self.obs_dims, dim=1)
@@ -278,7 +278,7 @@ class MADDPG:
         self.proto_history = [[] for _ in range(self.n_agents)]
 
     # 保存 / 加载（对齐 MADDPG）
-    def save(self, prefix="maddpg",Fed=False):
+    def save(self, prefix="maddpg", Fed=False):
         file_path = f"./model_pth/{prefix}"
         if not os.path.exists(file_path):
             os.makedirs(file_path)
@@ -286,8 +286,9 @@ class MADDPG:
             torch.save(self.actors[i].state_dict(), f"{file_path}/{Fed}_actor_{i}.pth")
             torch.save(self.critics[i].state_dict(), f"{file_path}/{Fed}_critic_{i}.pth")
 
-
-    def load(self, prefix="maddpg",Fed=False):
-            for i in range(self.n_agents):
-                self.actors[i].load_state_dict(torch.load(f"./model_pth/{prefix}/{Fed}_actor_{i}.pth", map_location=device,weights_only=True))
-                self.critics[i].load_state_dict(torch.load(f"./model_pth/{prefix}/{Fed}_critic_{i}.pth", map_location=device,weights_only=True))
+    def load(self, prefix="maddpg", Fed=False):
+        for i in range(self.n_agents):
+            self.actors[i].load_state_dict(
+                torch.load(f"./model_pth/{prefix}/{Fed}_actor_{i}.pth", map_location=device, weights_only=True))
+            self.critics[i].load_state_dict(
+                torch.load(f"./model_pth/{prefix}/{Fed}_critic_{i}.pth", map_location=device, weights_only=True))

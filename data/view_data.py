@@ -2,11 +2,12 @@ import pandas as pd
 import numpy as np
 from load_data import load_ITE_data
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 from matplotlib.dates import DateFormatter
 
-
-path1="IES_data/G_demand.csv"
-path2="IES_data/H_demand.csv"
+mpl.rcParams["font.family"] = ["SimHei", "Microsoft YaHei"]
+path1 = "IES_data/G_demand.csv"
+path2 = "IES_data/H_demand.csv"
 data = load_ITE_data(path1, path2)
 for d in data:
     del d['sin_h']
@@ -20,12 +21,13 @@ indicators = [
     ('R', 'MW'),
 ]
 # 遍历4组数据
+mouth = 8
 for group in range(4):
     ax = axes[group]
-    times = data[group]['datetime'][24*30*6:24*30*6+24]  # 该组的时间序列
+    times = data[group]['datetime'][24 * 30 * mouth:24 * 30 * mouth + 24]  # 该组的时间序列
     # 遍历4个指标，在当前子图中绘制曲线
     for indicator, unit in indicators:
-        values = data[group][indicator][24*30*6:24*30*6+24]
+        values = data[group][indicator][24 * 30 * mouth:24 * 30 * mouth + 24]
         ax.plot(times, values, label=f'{indicator}（{unit}）')
 
     # 设置子图标题和坐标轴
