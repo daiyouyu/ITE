@@ -45,7 +45,7 @@ def default_presets() -> Presets:
     """
 
     env_kwargs = dict(
-        n_agents=4,
+        n_agents=3,
         dt_hours=1.0,
         deg_cost_per_MW=1,
         obs_norm=True,
