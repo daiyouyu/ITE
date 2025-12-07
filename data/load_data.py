@@ -171,7 +171,6 @@ def load_ITE_data(
     # 电负荷矩阵 (4, T)
     G_L = np.vstack([
         g_res_1H.values,
-
         g_com_1H.values,
         g_pub_1H.values,
         g_ind_1H.values,
@@ -187,10 +186,10 @@ def load_ITE_data(
 
     # 可再生功率 (4, T) —— 你原来等比复制
     R = np.vstack([
-        wind_1H.values * 0.25 + solar_1H * 1,
-        wind_1H.values * 0.5 + solar_1H * 0.75,
-        wind_1H.values * 0.5 + solar_1H * 0.25,
-        wind_1H.values * 0.25 + solar_1H * 0.0,
+        wind_1H.values * 0.125 + solar_1H * 1,
+        wind_1H.values * 0.4 + solar_1H * 0.50,
+        wind_1H.values * 0.4 + solar_1H * 0.25,
+        wind_1H.values * 0.125 + solar_1H * 0.0,
     ])
 
     # 电价 (4, T)

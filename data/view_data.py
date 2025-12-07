@@ -13,7 +13,7 @@ for d in data:
     del d['sin_h']
     del d['cos_h']
 # 创建4个子图（对应4组数据），2行2列布局
-fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(16, 12))
+fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(16, 12), dpi=300)
 axes = axes.flatten()  # 将2x2的axes转换为一维数组，方便遍历
 indicators = [
     ('H_L', 'MWth'),
@@ -21,7 +21,7 @@ indicators = [
     ('R', 'MW'),
 ]
 # 遍历4组数据
-mouth = 8
+mouth = 1
 for group in range(4):
     ax = axes[group]
     times = data[group]['datetime'][24 * 30 * mouth:24 * 30 * mouth + 24]  # 该组的时间序列
