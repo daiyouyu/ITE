@@ -21,7 +21,7 @@ indicators = [
     ('R', 'MW'),
 ]
 # 遍历4组数据
-mouth = 1
+mouth = 6
 for group in range(4):
     ax = axes[group]
     times = data[group]['datetime'][24 * 30 * mouth:24 * 30 * mouth + 24]  # 该组的时间序列

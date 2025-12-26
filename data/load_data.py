@@ -75,9 +75,12 @@ def load_ITE_data(
     # 电负荷分区（与你原函数一致）
     elec_res_cols = ['N105', 'N106', 'N107', 'N109', 'N110', 'N111', 'N112', 'N113', 'N114',
                      'N116', 'N118', 'N125', 'N126', 'N127', 'N128', 'N129', 'N130']
+
     elec_ind_cols = ['N83', 'N84']
+
     elec_com_cols = ['N103', 'N122', 'N85', 'N86', 'N87', 'N88', 'N89', 'N90', 'N91', 'N92',
                      'N93', 'N94', 'N95', 'N96', 'N97', 'N98']
+
     elec_pub_cols = ['N76', 'N77', 'N78', 'N79', 'N80', 'N81', 'N104', 'N108', 'N115', 'N117',
                      'N120', 'N121', 'N123', 'N124', 'N99', 'N100', 'N101', 'N102']
 
@@ -89,6 +92,7 @@ def load_ITE_data(
 
     # 可再生列（热表里）
     wind_cols = ['WT1 (MW)', 'WT2 (MW)', 'WT3 (MW)', 'WT4 (MW)', 'WT5 (MW)']
+
     solar_cols = ['PV1 (MW)', 'PV2 (MW)', 'PV3 (MW)', 'PV4 (MW)', 'PV5 (MW)',
                   'PV6 (MW)', 'PV7 (MW)', 'PV8 (MW)', 'PV9 (MW)', 'PV10 (MW)',
                   'PV11 (MW)', 'PV12 (MW)', 'PV13 (MW)', 'PV14 (MW)', 'PV15 (MW)']

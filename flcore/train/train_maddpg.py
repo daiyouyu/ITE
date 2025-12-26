@@ -119,5 +119,5 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True, ):
         print(format_episode_info(ep, (ep_rew / max(1, t)) * 24, ep_info[0]))
 
     env.close()
-    maddpg.save("maddpg", Fed=Federated)
+    #    maddpg.save(f"maddpg", Fed=Federated)
     return rewards, test_rewards

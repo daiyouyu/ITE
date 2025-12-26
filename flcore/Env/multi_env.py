@@ -4,6 +4,7 @@ from gymnasium import spaces
 import numpy as np
 from typing import Dict, List
 
+
 class BatteryEnvSingle(gym.Env):
     """
     单智能体电池+锅炉简化环境（不再持有全时序数据）
@@ -20,21 +21,21 @@ class BatteryEnvSingle(gym.Env):
                  soc_min=0.1, soc_max=0.9, soc_init=0.1,
                  deg_cost_per_MW=2,
                  penalty_soc=0.0,
-                 episode_len=24,          # 由协调器传全局长度
-                 obs_norm=True,           # 仍保留，便于后续扩展
-                 #锅炉参数
-                 Fbmax = 2,
-                 cf = 612,
-                 #chp参数
-                 CHP_a = 0.72,
-                 CHP_b = 0.405,
-                 CHP_c = 0.108,
-                 CHP_d = 229.2,
-                 CHP_e = 171.9,
-                 CHP_f = 75,
-                 #HB参数
-                 P_HB_e_h = 15,
-                 P_HB_e_l = 0,
+                 episode_len=24,  # 由协调器传全局长度
+                 obs_norm=True,  # 仍保留，便于后续扩展
+                 # 锅炉参数
+                 Fbmax=2,
+                 cf=612,
+                 # chp参数
+                 CHP_a=0.72,
+                 CHP_b=0.405,
+                 CHP_c=0.108,
+                 CHP_d=229.2,
+                 CHP_e=171.9,
+                 CHP_f=75,
+                 # HB参数
+                 P_HB_e_h=15,
+                 P_HB_e_l=0,
                  seed: int | None = None,
                  ):
         super().__init__()
@@ -85,11 +86,11 @@ class BatteryEnvSingle(gym.Env):
         # 动作/观测空间
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32)
         self.observation_space = spaces.Box(
-            low=np.array([0.0,0.0, 0.0, -10.0, self.soc_min, -1.0, -1.0, 0.0, -1.0], dtype=np.float32),
-            high=np.array([2.0,2.0, 2.0, 10000.0, self.soc_max, 1.0, 1.0, 1e6, 1.0], dtype=np.float32)        )
+            low=np.array([0.0, 0.0, 0.0, -10.0, self.soc_min, -1.0, -1.0, 0.0, -1.0], dtype=np.float32),
+            high=np.array([2.0, 2.0, 2.0, 10000.0, self.soc_max, 1.0, 1.0, 1e6, 1.0], dtype=np.float32))
 
     # 由协调器调用，注入本步外生量和（可选）归一化尺度
-    def set_exogenous(self, G_L,H_L, R, P, sin_h, cos_h, G_L_scale=1.0, H_L_scale=1.0,R_scale=1.0, P_scale=1.0):
+    def set_exogenous(self, G_L, H_L, R, P, sin_h, cos_h, G_L_scale=1.0, H_L_scale=1.0, R_scale=1.0, P_scale=1.0):
         self._exog = {"G_L": float(G_L),
                       "H_L": float(H_L),
                       "R": float(R),
@@ -142,31 +143,31 @@ class BatteryEnvSingle(gym.Env):
         fuel_kgph, P_boiler_e = self._boiler_block(boiler_a)
         # CHP动作
         CHP_a = float(np.clip(action[2], -1.0, 1.0))
-        P_CHP_e,P_CHP_h = self._CHP_block(CHP_a)
+        P_CHP_e, P_CHP_h = self._CHP_block(CHP_a)
         # HB动作
         HB_a = float(np.clip(action[3], -1.0, 1.0))
         P_HB_h = self._HB_block(HB_a)
 
-        #电力结算
-        net_power = G_L - R + self.P_es - P_CHP_e - P_boiler_e   # MW（不裁零，留给市场清算层处理）
-        #热力结算
+        # 电力结算
+        net_power = G_L - R + self.P_es - P_CHP_e - P_boiler_e  # MW（不裁零，留给市场清算层处理）
+        # 热力结算
         net_heat = H_L - P_CHP_h - P_HB_h
 
         # 本地成本（不含购售电；电费由协调器做市场结算）
-        soc_cost  = self.deg_c * abs(self.P_es)           # 折旧
+        soc_cost = self.deg_c * abs(self.P_es)  # 折旧
         ##锅炉
-        boiler_cost  = self._boiler_cost(fuel_kgph,P_boiler_e)
+        boiler_cost = self._boiler_cost(fuel_kgph, P_boiler_e)
         ##CHP成本
-        CHP_cost = self._CHP_cost(P_CHP_e,P_CHP_h)
+        CHP_cost = self._CHP_cost(P_CHP_e, P_CHP_h)
         ##HB成本
         HB_cost = self._HB_cost(P_HB_h)
 
         # 奖励仅先返回“本地项”，最终奖励由协调器：-(电力结算+本地项)
-        local_cost = soc_cost + boiler_cost + CHP_cost + HB_cost    # 注意 local_pen 已是“奖励加项”，这里减回
+        local_cost = soc_cost + boiler_cost + CHP_cost + HB_cost  # 注意 local_pen 已是“奖励加项”，这里减回
         reward_placeholder = 0.0  # 真正 reward 由协调器重算
-        #aboiler = boiler_cost / P_boiler_e
-        #aCHP = CHP_cost / (P_CHP_h + P_CHP_e)
-        #aHB = HB_cost / P_HB_h
+        # aboiler = boiler_cost / P_boiler_e
+        # aCHP = CHP_cost / (P_CHP_h + P_CHP_e)
+        # aHB = HB_cost / P_HB_h
         # 推进内部计步
         self._t += 1
         done = (self._t >= self.episode_len)
@@ -174,13 +175,13 @@ class BatteryEnvSingle(gym.Env):
         # === 子环境决定：是否售电 / 售电报价（成本×1.1） / 购买外部电价 ===
         # 单位成本近似：以“用于供电的出力”作为分母做加权
         p_dis = max(0.0, self.P_es)  # 电池放电功率
-        gen = max(0.0, P_boiler_e) + max(0.0 , P_CHP_e)  # 锅炉出力
+        gen = max(0.0, P_boiler_e) + max(0.0, P_CHP_e)  # 锅炉出力
         R_gen = max(0.0, R)
         R_cost = max(0.0, R_gen * 5)
         denom = max(1e-9, p_dis + gen + R_gen)
 
         a_sell = float(np.clip(action[4], -1.0, 1.0))
-        a_buy  = float(np.clip(action[5], -1.0, 1.0))
+        a_buy = float(np.clip(action[5], -1.0, 1.0))
         # 供需声明（MW）
         demand_MW = max(0.0, net_power)  # >0 需要购电
         offer_MW = max(0.0, -net_power) * 0.8  # <0 可对外售电
@@ -189,13 +190,13 @@ class BatteryEnvSingle(gym.Env):
             ask_price = None
         else:
             # 单位成本：$/MWh，防爆夹紧（也可用 P 的区间）
-            unit_cost = (soc_cost + boiler_cost + R_cost ) / max(1e-3, denom)
+            unit_cost = (soc_cost + boiler_cost + R_cost) / max(1e-3, denom)
             markup = 1.0 + 0.5 * (a_sell + 1.0) / 2.0  # 1.0~1.5
             ask_price = float(np.clip(unit_cost * markup, 0.2 * P, 1.5 * P))
 
-        if demand_MW <= 1e-6 :
-            need_price = None# 外部电网价格（$/MWh），作为保底补足价
-        else :
+        if demand_MW <= 1e-6:
+            need_price = None  # 外部电网价格（$/MWh），作为保底补足价
+        else:
             markup = 0.8 * (a_buy + 1.0) / 2.0
             need_price = float(np.clip(P * markup, 0.0, P))
 
@@ -211,22 +212,22 @@ class BatteryEnvSingle(gym.Env):
             "soc": self._soc,
             "newpower_gen": R,
             "grid_price": P,
-            "net_power_MW": net_power,    # 给协调器做市场清算
-            "net_heat":net_heat,
-            "CHP_cost":CHP_cost,
-            "HB_cost":HB_cost,
+            "net_power_MW": net_power,  # 给协调器做市场清算
+            "net_heat": net_heat,
+            "CHP_cost": CHP_cost,
+            "HB_cost": HB_cost,
             "soc_cost": soc_cost,
             "boiler_cost": boiler_cost,
-            "local_cost": local_cost,     # 便于协调器直接叠加
+            "local_cost": local_cost,  # 便于协调器直接叠加
             # === 市场撮合所需 ===
-            "offer_MW": offer_MW,                 # 可售电量（MW）
-            "ask_price": ask_price,        # 售电报价（$/MWh）
-            "need_price" : need_price,
-            "demand_MW": demand_MW,               # 购电需求（MW）
+            "offer_MW": offer_MW,  # 可售电量（MW）
+            "ask_price": ask_price,  # 售电报价（$/MWh）
+            "need_price": need_price,
+            "demand_MW": demand_MW,  # 购电需求（MW）
         }
         return obs_next, float(reward_placeholder), bool(done), False, info
 
-    def _soc_block(self,a):
+    def _soc_block(self, a):
         a = (a + 1) / 2  # 调整到 0~1
         if self.P_es >= 0 and self._soc < self.soc_max:
             self.P_es = min(a * self.Pmax, (self.soc_max - self._soc) * self.E / self.eta_ch)
@@ -237,15 +238,16 @@ class BatteryEnvSingle(gym.Env):
         soc = (eta * self.P_es) / self.E
         self._soc = soc + self._soc
 
-    def _H_restore_block(self,a_ch,a_dis):
+    def _H_restore_block(self, a_ch, a_dis):
         a_ch = (float(np.clip(a_ch, -1.0, 1.0)) + 1.0) / 2.0
         a_dis = (float(np.clip(a_dis, -1.0, 1.0)) + 1.0) / 2.0
         eta = 0.02
         P_ch = 0.3
         P_dis = 0.3
-        self._hsoc = (1-eta)*self._hsoc + (P_ch*a_ch- P_dis/a_dis)
+        self._hsoc = (1 - eta) * self._hsoc + (P_ch * a_ch - P_dis / a_dis)
 
-    def _boiler_block(self,  a_norm: float):
+    def _boiler_block(self, a_norm: float):
+
         u = (float(np.clip(a_norm, -1.0, 1.0)) + 1.0) / 2.0  # u∈[0,1]
         u = max(0.0, 2.0 * (u - 0.1))  # 去中心：u=0.5 -> 0，u=1->1，u=0->0
         M_bfw = u * self.Fbmax
@@ -254,57 +256,62 @@ class BatteryEnvSingle(gym.Env):
         p_gen = Hfuel * (0.43 + noise)
         return M_bfw, p_gen
 
-    def _boiler_cost(self,fuel_kgph,P_boiler_e):
+    def _boiler_cost(self, fuel_kgph, P_boiler_e):
 
         gf = 0.8325
-        boiler_cost = self.cf * fuel_kgph  + gf * self.cco2 * P_boiler_e
+        boiler_cost = self.cf * fuel_kgph + gf * self.cco2 * P_boiler_e
         return boiler_cost
-    #定义热电联产模块
-    def _CHP_block(self,  a_norm: float):
-        #定义参数
+
+    # 定义热电联产模块
+    def _CHP_block(self, a_norm: float):
+        # 定义参数
         P_CHP_e_h = 8
         P_CHP_e_l = 0
         P_CHP_h_h = 3
         P_CHP_h_l = 0
 
         alpha_CHP = 1.2
-        #获取动作
+        # 获取动作
         u = (float(np.clip(a_norm, -1.0, 1.0)) + 1.0) / 2.0  # u∈[0,1]
         P_CHP_e = u * (P_CHP_e_h - P_CHP_e_l) + P_CHP_e_l
         P_CHP_h = alpha_CHP * P_CHP_e
-        return P_CHP_e,P_CHP_h
+        return P_CHP_e, P_CHP_h
 
-    def _CHP_cost(self,CHP_e,CHP_h):
-        a = 0.72
-        b = 0.405
-        c = 0.108
-        d = 229.2
-        e = 171.9
-        f = 75
+    def _CHP_cost(self, CHP_e, CHP_h):
+
+        a = self.CHP_a
+        b = self.CHP_b
+        c = self.CHP_c
+        d = self.CHP_d
+        e = self.CHP_e
+        f = self.CHP_f
         k_CHP = 0.005
-        CHP_cost = a*CHP_e*CHP_e + b*CHP_h*CHP_h +c*CHP_e*CHP_h + d*CHP_e + e*CHP_h + f
+
+        CHP_cost = a * CHP_e * CHP_e + b * CHP_h * CHP_h + c * CHP_e * CHP_h + d * CHP_e + e * CHP_h + f
+
         cco2_cost = k_CHP * CHP_e * self.cco2
-        return CHP_cost  + cco2_cost
+        return CHP_cost + cco2_cost
 
     # 定义热泵模块
     def _HB_block(self, a_norm: float):
-
 
         # 获取动作
         u = (float(np.clip(a_norm, -1.0, 1.0)) + 1.0) / 2.0  # u∈[0,1]
         P_HB_h = u * (self.P_HB_e_h - self.P_HB_e_l) + self.P_HB_e_l
         return P_HB_h
 
-    def _HB_cost(self,HB_h):
+    def _HB_cost(self, HB_h):
         a = 0.0171
         b = 230.5
         c = 75
         k_HB = 0.008
-        HB_cost = a*HB_h*HB_h + b*HB_h +c
+        HB_cost = a * HB_h * HB_h + b * HB_h + c
         cco2_cost = HB_h * k_HB * self.cco2
         return HB_cost + cco2_cost
 
-    def render(self): pass
+    def render(self):
+        pass
+
 
 class MultiBatteryCoordinator(gym.Env):
     """
@@ -313,6 +320,7 @@ class MultiBatteryCoordinator(gym.Env):
     - step(action_dict): 收集各子环境的 net_power_MW、本地成本，统一做“电力结算”后再给奖励
     - 这里先按“外网电价直接结算”占位；你后续可替换为内部市场出清（式14/15）
     """
+
     def __init__(self, series: Dict[str, np.ndarray],
                  n_agents: int,
                  per_agent_kwargs,
@@ -352,14 +360,14 @@ class MultiBatteryCoordinator(gym.Env):
         self.action_spaces: Dict[str, spaces.Box] = {aid: env.action_space for aid, env in self.envs.items()}
 
     def _inject_exogenous_to_all(self, t: int):
-        for i,(aid,env) in enumerate(self.envs.items()):
+        for i, (aid, env) in enumerate(self.envs.items()):
             G_L = float(self.series[i]["G_L"][t])
             H_L = float(self.series[i]['H_L'][t])
             R = float(self.series[i]["R"][t])
             P = float(self.series[i]["P"][t])
             sin_h = float(self.series[i]["sin_h"][t])
             cos_h = float(self.series[i]["cos_h"][t])
-            env.set_exogenous(G_L,H_L, R, P, sin_h, cos_h,
+            env.set_exogenous(G_L, H_L, R, P, sin_h, cos_h,
                               G_L_scale=self._G_L_scale,
                               H_L_scale=self._H_L_scale,
                               R_scale=self._R_scale,
@@ -397,7 +405,7 @@ class MultiBatteryCoordinator(gym.Env):
         sellers = []  # (ask_price, aid, offer_MW)
         buyers = []  # (aid, demand_MW)
         tmp = {aid: {
-            "buy_MWh": 0.0, "sell_MWh": 0.0, "cash_trade": 0.0,"check":0
+            "buy_MWh": 0.0, "sell_MWh": 0.0, "cash_trade": 0.0, "check": 0
         } for aid in self.agents}
 
         for aid in self.agents:
@@ -413,16 +421,16 @@ class MultiBatteryCoordinator(gym.Env):
             if offer >= 1e-6 and ask is not None:
                 sellers.append((float(ask), aid, offer))
             if demand >= 1e-6:
-                buyers.append((float(need),aid, demand))
+                buyers.append((float(need), aid, demand))
 
         # 2) 撮合（从最低报价卖家开始）
         sellers.sort(key=lambda x: x[0])  # 价格升序
-        #sellers_offersum = sum(sellers[:][2])
-        buyers.sort(key=lambda x: x[0] , reverse =True)
-        #buyers_demandsum = sum(buyers[:][2])
+        # sellers_offersum = sum(sellers[:][2])
+        buyers.sort(key=lambda x: x[0], reverse=True)
+        # buyers_demandsum = sum(buyers[:][2])
         seller_left = {aid: offer for _, aid, offer in sellers}
 
-        for (need_price,buyer_aid, need) in buyers:
+        for (need_price, buyer_aid, need) in buyers:
             remaining = need
             for (ask, seller_aid, _) in sellers:
                 if remaining <= 1e-9:
@@ -431,7 +439,7 @@ class MultiBatteryCoordinator(gym.Env):
                 if cap <= 1e-9:
                     continue
                 trade = min(remaining, cap)
-                check = (ask+need_price)/2
+                check = (ask + need_price) / 2
                 # 成交记录（MWh与现金）
                 tmp[buyer_aid]["buy_MWh"] += trade * dt_h
                 tmp[buyer_aid]["cash_trade"] += check * trade * dt_h  # 买家支出（正）
@@ -457,7 +465,6 @@ class MultiBatteryCoordinator(gym.Env):
             market_sell_MWh = tmp[aid]["sell_MWh"]
             market_cash = tmp[aid]["cash_trade"]  # 卖家为收入（正），买家为支出（正）
 
-
             # 外网补足（只有买家有）
             demand_MW = float(inf.get("demand_MW", max(0.0, net_power)))
             trade_buy_MW = market_buy_MWh / max(1e-9, dt_h)
@@ -476,8 +483,8 @@ class MultiBatteryCoordinator(gym.Env):
             #   统一写成：
             elec_cost = grid_cost - (market_cash if market_sell_MWh > 0 else 0.0) \
                         + (market_cash if market_buy_MWh > 0 else 0.0) + surplus_cost
-            #外网补足热力
-            heat_cost = max(0.0,net_heat) * 360
+            # 外网补足热力
+            heat_cost = max(0.0, net_heat) * 360
             total_cost = local_cost + elec_cost + heat_cost
             rew = - total_cost / 1000.0
 
@@ -486,7 +493,7 @@ class MultiBatteryCoordinator(gym.Env):
             ii.update({
                 "elec_cost": elec_cost,
                 "p_grid_buy": grid_cost,
-                "h_grid_buy": max(0.0,net_heat),
+                "h_grid_buy": max(0.0, net_heat),
                 "market_buy_MWh": market_buy_MWh,
                 "market_sell_MWh": market_sell_MWh,
                 "market_cashflow": market_cash if market_sell_MWh > 0 else -market_cash,  # 卖家为 +收入；买家为 +支出
@@ -510,10 +517,10 @@ class MultiBatteryCoordinator(gym.Env):
                 avg_price = 0.0
                 market_MWH = 0.0
                 if market_buy > 1e-6:
-                    avg_price  = -market_cash / max(1e-6, market_buy)
+                    avg_price = -market_cash / max(1e-6, market_buy)
                     market_MWH = -market_buy
                 elif market_sell > 1e-6:
-                    avg_price  = +market_cash / max(1e-6, market_sell)
+                    avg_price = +market_cash / max(1e-6, market_sell)
                     market_MWH = market_sell
 
                 obs[aid] = env._make_obs(avg_price, market_MWH)
@@ -522,4 +529,3 @@ class MultiBatteryCoordinator(gym.Env):
             obs = obs_tmp  # 已经到末尾，随便给占位即可
 
         return obs, rews, term_tmp, trunc_tmp, infos
-

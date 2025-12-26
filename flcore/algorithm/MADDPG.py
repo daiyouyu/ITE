@@ -69,6 +69,10 @@ class MADDPG:
         self.critic_targets = []
         self.critic_opts = []
 
+        self.critics_2 = []
+        self.critic_targets_2 = []
+        self.critic_opts_2 = []
+
         self.Federated_proto = []
         self.proto_history = [[] for _ in range(self.n_agents)]
 
@@ -90,9 +94,18 @@ class MADDPG:
             critic = Critic(total_obs, total_action).to(device)
             critic_t = copy.deepcopy(critic).to(device)
             opt_c = optim.Adam(critic.parameters(), lr=lr_critic)
+
+            critic_2 = copy.deepcopy(critic).to(device)
+            critic_t_2 = copy.deepcopy(critic).to(device)
+            opt_c_2 = optim.Adam(critic.parameters(), lr=lr_critic)
+
             self.critics.append(critic)
             self.critic_targets.append(critic_t)
             self.critic_opts.append(opt_c)
+
+            self.critics_2.append(critic_2)
+            self.critic_targets_2.append(critic_t_2)
+            self.critic_opts_2.append(opt_c_2)
 
         # replay
         self.replay = JointReplayBuffer(max_size=buffer_size)
@@ -162,16 +175,29 @@ class MADDPG:
                 next_actions_cat = torch.cat(next_actions, dim=1)  # (B, total_action)
 
                 # compute target Q using agent i's critic_target
-                q_next = self.critic_targets[i](next_obs_b_t, next_actions_cat)
+                q_next_1 = self.critic_targets[i](next_obs_b_t, next_actions_cat)
+                q_next_2 = self.critic_targets_2[i](next_obs_b_t, next_actions_cat)
+                q_next = torch.min(q_next_1, q_next_2)
                 # reward for agent i: rews_b_t[:, i:i+1]
                 td_target = rews_b_t[:, i:i + 1] + (1.0 - dones_b_t[:, i:i + 1]) * (self.gamma * q_next)
 
-            # current Q
-            q_curr = self.critics[i](obs_b_t, acts_b_t)
-            loss_q = nn.MSELoss()(q_curr, td_target.detach())
+            # --------------------
+            # 更新 Q1 网络
+            # --------------------
+            q_curr_1 = self.critics[i](obs_b_t, acts_b_t)
+            loss_q1 = nn.MSELoss()(q_curr_1, td_target.detach())
             self.critic_opts[i].zero_grad()
-            loss_q.backward()
+            loss_q1.backward()
             self.critic_opts[i].step()
+
+            # --------------------
+            # 更新 Q2 网络（新增：独立更新 Q2）
+            # --------------------
+            q_curr_2 = self.critics_2[i](obs_b_t, acts_b_t)
+            loss_q2 = nn.MSELoss()(q_curr_2, td_target.detach())
+            self.critic_opts_2[i].zero_grad()
+            loss_q2.backward()
+            self.critic_opts_2[i].step()
 
             # --------------------
             # Actor update (policy gradient)
@@ -211,6 +237,8 @@ class MADDPG:
             for p, p_t in zip(self.actors[i].parameters(), self.actor_targets[i].parameters()):
                 p_t.data.copy_(self.tau * p.data + (1.0 - self.tau) * p_t.data)
             for p, p_t in zip(self.critics[i].parameters(), self.critic_targets[i].parameters()):
+                p_t.data.copy_(self.tau * p.data + (1.0 - self.tau) * p_t.data)
+            for p, p_t in zip(self.critics_2[i].parameters(), self.critic_targets_2[i].parameters()):
                 p_t.data.copy_(self.tau * p.data + (1.0 - self.tau) * p_t.data)
 
     def Fed_Aggergate(self):

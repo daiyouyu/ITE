@@ -28,8 +28,8 @@ for _fp in _preferred_fonts:
 
 def draw_result(rewards_record):
     # plot
-    for idx, reward in enumerate(rewards_record):
-        plt.plot(reward, label=str(idx))
+    for idx, (key, reward) in enumerate(rewards_record.items()):
+        plt.plot(reward, label=str(key))
     plt.title("结果")
     plt.xlabel("Episode")
     plt.ylabel("日平均费用")
@@ -39,6 +39,6 @@ def draw_result(rewards_record):
 
 rew = np.load("D:\\ITE\\result\\result_arrays.npz")
 keys = ["iddpg", "Fed_iddpg", "maddpg", "Fed_maddpg"]
-# data = {key: rew[key].sum(axis=0) for key in rew.keys()}
-data = {key: rew[key] for key in rew.keys()}
-draw_result(data["maddpg"])
+data = {key: rew[key].sum(axis=0) for key in rew.keys()}
+# data = {key: rew[key] for key in rew.keys()}
+draw_result(data)
