@@ -258,7 +258,7 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
     fig.suptitle(title)
 
     # 统一图例元素名
-    legend_labels = ['可再生出力', '电池放电', '锅炉发电', '热点联产', '内部购电', '外网购电', '需求（L）']
+    legend_labels = ['可再生出力', '电池放电', '锅炉发电', '热电联产', '内部购电', '外网购电', '需求（L）']
     handles_sample = None
 
     for idx, aid in enumerate(agent_ids):

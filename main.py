@@ -11,17 +11,17 @@ from flcore.train.train_maddpg import train_maddpg
 
 if __name__ == "__main__":
     # re1,test_re = train_maddpg(episodes=100,train = 7  , test = 1 ,Federated = True)
-    # iddpg, test_re = train_iddpg(episodes=1000, train=365, test=0, Federated=False)
-    # Fed_iddpg, test_re = train_iddpg(episodes=1000, train=365, test=0, Federated=True)
-    maddpg, test_re = train_maddpg(episodes=500, train=100, test=0, Federated=False)
-    Fed_maddpg, test_re = train_maddpg(episodes=500, train=100, test=0, Federated=True)
+    iddpg, test_re = train_iddpg(episodes=1000, train=365, test=0, Federated=False)
+    Fed_iddpg, test_re = train_iddpg(episodes=1000, train=365, test=0, Federated=True)
+    maddpg, test_re = train_maddpg(episodes=1000, train=365, test=0, Federated=False)
+    Fed_maddpg, test_re = train_maddpg(episodes=1000, train=365, test=0, Federated=True)
 
-    # re1 = np.array(iddpg).T
-    # re2 = np.array(Fed_iddpg).T
+    re1 = np.array(iddpg).T
+    re2 = np.array(Fed_iddpg).T
     re3 = np.array(maddpg).T
     re4 = np.array(Fed_maddpg).T
-    # iddpg = np.array(re1)
-    # Fed_iddpg = np.array(re2)
+    iddpg = np.array(re1)
+    Fed_iddpg = np.array(re2)
     maddpg = np.array(re3)
 
     Fed_maddpg = np.array(re4)
@@ -36,5 +36,5 @@ if __name__ == "__main__":
     file_path = os.path.join(save_dir, 'result_arrays')
 
     # 保存到指定目录
-    # np.savez(file_path, iddpg=iddpg, Fed_iddpg=Fed_iddpg, maddpg=maddpg, Fed_maddpg=Fed_maddpg)
-    np.savez(file_path, maddpg=maddpg, Fed_maddpg=Fed_maddpg)
+    np.savez(file_path, iddpg=iddpg, Fed_iddpg=Fed_iddpg, maddpg=maddpg, Fed_maddpg=Fed_maddpg)
+    # np.savez(file_path, maddpg=maddpg, Fed_maddpg=Fed_maddpg)
