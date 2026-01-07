@@ -1,0 +1,56 @@
+[
+  {
+    "tag_node": "Group2.6510FI_11601.PV",
+    "measurement_name": "20260101",
+    "value": 644.141334691584,
+    "time": 1766678400000000000
+  },
+  {
+    "tag_node": "Group2.6510FI_11601.PV",
+    "measurement_name": "20260101",
+    "value": 696.90289197269,
+    "time": 1766678460000000000
+  },
+  {
+    "tag_node": "Group2.6510FI_11601.PV",
+    "measurement_name": "20260101",
+    "value": 271.4063808924567,
+    "time": 1766678520000000000
+  },
+  {
+    "tag_node": "Group2.6510FT_11601.PV",
+    "measurement_name": "20260101",
+    "value": 51.95661356248837,
+    "time": 1766678400000000000
+  },
+  {
+    "tag_node": "Group2.6510FT_11601.PV",
+    "measurement_name": "20260101",
+    "value": 662.0468372020928,
+    "time": 1766678460000000000
+  },
+  {
+    "tag_node": "Group2.6510FT_11601.PV",
+    "measurement_name": "20260101",
+    "value": 813.5014255939498,
+    "time": 1766678520000000000
+  },
+  {
+    "tag_node": "Group2.6510TT_11601.PV",
+    "measurement_name": "20260101",
+    "value": 741.9366970548357,
+    "time": 1766678400000000000
+  },
+  {
+    "tag_node": "Group2.6510TT_11601.PV",
+    "measurement_name": "20260101",
+    "value": 179.30922020266848,
+    "time": 1766678460000000000
+  },
+  {
+    "tag_node": "Group2.6510TT_11601.PV",
+    "measurement_name": "20260101",
+    "value": 416.7944558880686,
+    "time": 1766678520000000000
+  }
+]

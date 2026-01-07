@@ -17,7 +17,7 @@ def generate_industrial_data():
 
     # 时间范围配置
     start_time = datetime(2025, 12, 28, 0, 0, 0)
-    end_time = datetime(2026, 1, 7, 23, 59, 59)
+    end_time = datetime(2026, 1, 17, 23, 59, 59)
 
     # 计算总分钟数
     total_minutes = int((end_time - start_time).total_seconds() / 60) + 1

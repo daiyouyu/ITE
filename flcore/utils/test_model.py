@@ -145,7 +145,8 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
 
     hours = 24
     per = {a: {k: np.zeros(hours, dtype=np.float32) for k in [
-        'demand', 'renew', 'bat_dis', 'boiler', 'P_CHP_e', 'market_buy', 'grid_buy', 'surplus_dump']}
+        'G_demand', 'renew', 'bat_dis', 'boiler', 'P_CHP_e', 'market_buy', 'grid_buy', 'surplus_dump',
+        'H_demand', 'P_CHP_h', 'P_HB_h', 'h_grid_buy']}
            for a in agents}
 
     for h in range(hours):
@@ -155,15 +156,20 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
 
         for aid in agents:
             inf = info_dict[aid]
-            per[aid]['demand'][h] = float(inf.get('G_demand', 0.0))
+            per[aid]['G_demand'][h] = float(inf.get('G_demand', 0.0))
             per[aid]['renew'][h] = float(inf.get('newpower_gen', 0.0))
-            p_bat = float(inf.get('p_bat', 0.0))
-            per[aid]['bat_dis'][h] = p_bat
+
+            per[aid]['bat_dis'][h] = float(inf.get('p_bat', 0.0))
             per[aid]['boiler'][h] = max(0.0, float(inf.get('P_boiler_e', 0.0)))
             per[aid]['P_CHP_e'][h] = max(0.0, float(inf.get('P_CHP_e', 0.0)))
             per[aid]['market_buy'][h] = float(inf.get('market_buy_MWh', 0.0)) / max(1e-9, dt_hours)
             per[aid]['grid_buy'][h] = float(inf.get('grid_buy_MWh', 0.0)) / max(1e-9, dt_hours)
             per[aid]['surplus_dump'][h] = float(inf.get('surplus_dump_MWh', 0.0)) / max(1e-9, dt_hours)
+
+            per[aid]['H_demand'][h] = float(inf.get('H_demand', 0.0))
+            per[aid]['P_CHP_h'][h] = float(inf.get('P_CHP_h', 0.0))
+            per[aid]['P_HB_h'][h] = float(inf.get('P_HB_h', 0.0))
+            per[aid]['h_grid_buy'][h] = float(inf.get('h_grid_buy', 0.0))
 
         obs = next_obs
         if all(bool(term_dict[a]) or bool(trunc_dict[a]) for a in agents):
@@ -215,7 +221,7 @@ def plot_daily_stack_per_agent(per: Dict[str, Dict[str, np.ndarray]],
     os.makedirs(save_dir, exist_ok=True)
     saved = []
     for aid, dd in per.items():
-        hours = len(dd['demand'])
+        hours = len(dd['G_demand'])
         x = np.arange(hours)
         s1, s2, s3, s4, s5, s6 = dd['renew'], dd['bat_dis'], dd['boiler'], dd['P_CHP_e'], dd['market_buy'], dd[
             'grid_buy']
@@ -227,7 +233,7 @@ def plot_daily_stack_per_agent(per: Dict[str, Dict[str, np.ndarray]],
         ax.bar(x, s4, bottom=s1 + s2 + s3, label='热电联产', width=0.8)
         ax.bar(x, s5, bottom=s1 + s2 + s3 + s4, label='内部购电', width=0.8)
         ax.bar(x, s6, bottom=s1 + s2 + s3 + s4 + s5, label='外网购电', width=0.8)
-        ax.plot(x, dd['demand'], linestyle='--', linewidth=2.0, label='需求（L）')
+        ax.plot(x, dd['G_demand'], linestyle='--', linewidth=2.0, label='需求（L）')
 
         ax.set_xticks(x)
         ax.set_xticklabels([f"{h:02d}:00" for h in range(hours)])
@@ -265,7 +271,7 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
         r, c = divmod(idx, cols)
         ax = axes[r][c]
         dd = per[aid]
-        hours = len(dd['demand'])
+        hours = len(dd['G_demand'])
         x = np.arange(hours)
         s1, s2, s3, s4, s5, s6 = dd['renew'], dd['bat_dis'], dd['boiler'], dd['P_CHP_e'], dd['market_buy'], dd[
             'grid_buy']
@@ -276,10 +282,66 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
         h4 = ax.bar(x, s4, bottom=s1 + s2 + s3, width=0.8)
         h5 = ax.bar(x, s5, bottom=s1 + s2 + s3 + s4, width=0.8)
         h6 = ax.bar(x, s6, bottom=s1 + s2 + s3 + s4 + s5, width=0.8)
-        l6, = ax.plot(x, dd['demand'], linestyle='--', linewidth=2.0)
+        l6, = ax.plot(x, dd['G_demand'], linestyle='--', linewidth=2.0)
 
         if handles_sample is None:
             handles_sample = [h1, h2, h3, h4, h5, h6, l6]
+
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{h:02d}:00" for h in range(hours)])
+        ax.set_ylabel('功率 / MW')
+        ax.set_title(f"{aid}")
+        ax.grid(axis='y', linestyle=':', alpha=0.6)
+
+    # 删除空子图（当 n 不是 rows*cols 时）
+    for k in range(n, rows * cols):
+        r, c = divmod(k, cols)
+        fig.delaxes(axes[r][c])
+
+    # 放一个全局图例在底部
+    if handles_sample is not None:
+        fig.legend(handles_sample, legend_labels, loc='lower center', ncol=3)
+        fig.subplots_adjust(bottom=0.08)
+
+    fig.tight_layout(rect=[0, 0.05, 1, 0.96])
+    plt.savefig(save_path, dpi=220)
+    plt.close(fig)
+    return save_path
+
+
+def plot_daily_stack_per_agent_H_grid(per: Dict[str, Dict[str, np.ndarray]],
+                                      save_path: str = "daily_agents_grid.png",
+                                      title: str = "各智能体日内需求与供给（MW）") -> str:
+    """将所有智能体画在一张大图的四个子图（2x2）中。若智能体不是 4 个，会按需要排版。"""
+    agent_ids = list(per.keys())
+    n = len(agent_ids)
+    # 计算网格行列（最多画到 2x2；>4 时自动扩展）
+    import math
+    cols = 2 if n > 1 else 1
+    rows = math.ceil(n / cols)
+
+    fig, axes = plt.subplots(rows, cols, figsize=(14, 6 * rows), squeeze=False)
+    fig.suptitle(title)
+
+    # 统一图例元素名
+    legend_labels = ['热电联产', '热泵供热', '热网买热', '需求（L）']
+    handles_sample = None
+
+    for idx, aid in enumerate(agent_ids):
+        r, c = divmod(idx, cols)
+        ax = axes[r][c]
+        dd = per[aid]
+        hours = len(dd['H_demand'])
+        x = np.arange(hours)
+        s1, s2, s3 = dd['P_CHP_h'], dd['P_HB_h'], dd['h_grid_buy']
+
+        h1 = ax.bar(x, s1, width=0.8)
+        h2 = ax.bar(x, s2, bottom=s1, width=0.8)
+        h3 = ax.bar(x, s3, bottom=s1 + s2, width=0.8)
+        l6, = ax.plot(x, dd['H_demand'], linestyle='--', linewidth=2.0)
+
+        if handles_sample is None:
+            handles_sample = [h1, h2, h3, l6]
 
         ax.set_xticks(x)
         ax.set_xticklabels([f"{h:02d}:00" for h in range(hours)])
@@ -378,11 +440,14 @@ def test_model_and_plot(algo: str = "iddpg",
     # 分智能体：各出一张图
     per = rollout_one_day_per_agent(test_env, model, agents, day_start_idx=day_start, dt_hours=1.0)
     saved_files = plot_daily_stack_per_agent(per, save_dir=f"./result/{algo}", filename_prefix="daily_agent_")
-    grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"./result/{algo}/daily_agents_Fed{Fed}.png",
-                                                title=f"测试集第 {plot_day_offset + 1} 天：各智能体日内需求与供给（MW）")
+    G_grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"./result/{algo}/daily_agents_Fed{Fed}.png",
+                                                  title=f"测试集第 {plot_day_offset + 1} 天：各智能体日内需求与供给（MW）")
+
+    H_grid_path = plot_daily_stack_per_agent_H_grid(per, save_path=f"./result/{algo}/H_daily_agents_Fed{Fed}.png",
+                                                    title=f"测试集第 {plot_day_offset + 1} 天：各智能体日内需求与供给（MW）")
 
     print("Saved plot -> daily_supply_stack.png")
-    print(f"Saved plot -> {grid_path}")
+    print(f"Saved plot -> {G_grid_path}")
     for p in saved_files:
         print(f"Saved plot -> {p}")
     return [], test_rewards
