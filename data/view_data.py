@@ -6,6 +6,7 @@ import matplotlib as mpl
 from matplotlib.dates import DateFormatter
 
 mpl.rcParams["font.family"] = ["SimHei", "Microsoft YaHei"]
+plt.rcParams['lines.linewidth'] = 3
 path1 = "IES_data/G_demand.csv"
 path2 = "IES_data/H_demand.csv"
 data = load_ITE_data(path1, path2)
@@ -34,7 +35,7 @@ for group in range(4):
     ax.set_title(f'第 {group + 1} 组数据指标变化')
     ax.set_xlabel('时间')
     ax.tick_params(axis='x', rotation=45)
-    ax.grid(alpha=0.3)
+    ax.grid(alpha=1)
     ax.legend()  # 每个子图单独显示图例
 
 plt.tight_layout()
