@@ -12,20 +12,19 @@ for d in data:
     del d['sin_h']
     del d['cos_h']
 # 创建4个子图（对应4组数据），2行2列布局
-fig, axes = plt.subplots(nrows=2, ncols=1, figsize=(16, 12), dpi=300)
+fig, axes = plt.subplots(nrows=2, ncols=2, figsize=(16, 12), dpi=300)
 axes = axes.flatten()  # 将2x2的axes转换为一维数组，方便遍历
 indicators = [
     ('H_L', 'MWth'),
     ('G_L', 'MW'),
     ('R', 'MW'),
-    ('P', '元/MWh'),
 ]
 
 
 def view_HGR_data():
     # 遍历4组数据
-    mouth = 6
-    for group in range(2):
+    mouth = 1
+    for group in range(4):
         ax = axes[group]
         times = data[group]['datetime'][24 * 30 * mouth:24 * 30 * mouth + 24]  # 该组的时间序列
         for indicator, unit in indicators:
@@ -94,4 +93,4 @@ def view_P_data():
 
 
 if __name__ == '__main__':
-    view_P_data()
+    view_HGR_data()

@@ -191,7 +191,7 @@ def load_ITE_data(
     # 可再生功率 (4, T) —— 你原来等比复制
     R = np.vstack([
         wind_1H.values * 0.125 + solar_1H * 1,
-        wind_1H.values * 0.4 + solar_1H * 0.50,
+        wind_1H.values * 1 + solar_1H * 0.50,
         wind_1H.values * 0.4 + solar_1H * 0.25,
         wind_1H.values * 0.125 + solar_1H * 0.0,
     ])
