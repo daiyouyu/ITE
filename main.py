@@ -27,7 +27,7 @@ if __name__ == "__main__":
     Fed_maddpg = np.array(re4)
     now = time.time()
     now = time.localtime(now)
-    now = time.strftime('%Y-%m-%d_%H:%M:%S', now)
+    now = time.strftime('%Y-%m-%d_%H-%M-%S', now)
     # 指定保存目录（例如当前目录下的 'data' 文件夹）
     save_dir = f'./result/{now}'
 
