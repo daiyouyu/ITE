@@ -81,8 +81,6 @@ dependencies = [
     "sympy==1.14.0",
     "tensorstore==0.1.76",
     "toolz==1.0.0",
-    "torch==2.4.1",
-    "torchvision==0.19.1",
     "tqdm==4.67.1",
     "treescope==0.1.10",
     "types-pytz==2025.2.0.20250809",
