@@ -29,7 +29,7 @@ if __name__ == "__main__":
     now = time.localtime(now)
     now = time.strftime('%Y-%m-%d_%H:%M:%S', now)
     # 指定保存目录（例如当前目录下的 'data' 文件夹）
-    save_dir = f'./result_{now}'
+    save_dir = f'./result/{now}'
 
     # 检查目录是否存在，不存在则创建
     if not os.path.exists(save_dir):
