@@ -12,10 +12,10 @@ from datetime import datetime as dt
 
 if __name__ == "__main__":
     # re1,test_re = train_maddpg(episodes=100,train = 7  , test = 1 ,Federated = True)
-    iddpg, test_re = train_iddpg(episodes=1, train=365, test=0, Federated=False)
-    Fed_iddpg, test_re = train_iddpg(episodes=1, train=365, test=0, Federated=True)
-    maddpg, test_re = train_maddpg(episodes=1, train=365, test=0, Federated=False)
-    Fed_maddpg, test_re = train_maddpg(episodes=1, train=365, test=0, Federated=True)
+    iddpg, test_re = train_iddpg(episodes=500, train=365, test=0, Federated=False)
+    Fed_iddpg, test_re = train_iddpg(episodes=500, train=365, test=0, Federated=True)
+    maddpg, test_re = train_maddpg(episodes=500, train=365, test=0, Federated=False)
+    Fed_maddpg, test_re = train_maddpg(episodes=500, train=365, test=0, Federated=True)
 
     re1 = np.array(iddpg).T
     re2 = np.array(Fed_iddpg).T
