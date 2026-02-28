@@ -1,9 +1,10 @@
 import numpy as np
-import os, time
+import os
 # 导入算法
 from flcore.train.train_ddpg import train_ddpg
 from flcore.train.train_iddpg import train_iddpg
 from flcore.train.train_maddpg import train_maddpg
+from datetime import datetime as dt
 
 # save models
 # maddpg.save(prefix="maddpg_simple_adv")
@@ -25,9 +26,7 @@ if __name__ == "__main__":
     maddpg = np.array(re3)
 
     Fed_maddpg = np.array(re4)
-    now = time.time()
-    now = time.localtime(now)
-    now = time.strftime('%Y%m%d_%H%M%S', now)
+    now = dt.now().strftime('%Y%m%d')
     # 指定保存目录（例如当前目录下的 'data' 文件夹）
     save_dir = f'./result/{now}'
 
