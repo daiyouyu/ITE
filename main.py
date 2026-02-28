@@ -1,5 +1,5 @@
 import numpy as np
-import os,time
+import os, time
 # 导入算法
 from flcore.train.train_ddpg import train_ddpg
 from flcore.train.train_iddpg import train_iddpg
@@ -27,15 +27,15 @@ if __name__ == "__main__":
     Fed_maddpg = np.array(re4)
     now = time.time()
     now = time.localtime(now)
-    now = time.strftime('%Y-%m-%d_%H-%M-%S', now)
+    now = time.strftime('%Y%m%d_%H%M%S', now)
     # 指定保存目录（例如当前目录下的 'data' 文件夹）
     save_dir = f'./result/{now}'
 
     # 检查目录是否存在，不存在则创建
     if not os.path.exists(save_dir):
-        os.makedirs(save_dir)  # 递归创建目录（包括父目录）
+        os.makedirs(save_dir)
 
-    # 拼接完整路径（目录 + 文件名）
+        # 拼接完整路径（目录 + 文件名）
     file_path = os.path.join(save_dir, f'result_arrays')
 
     # 保存到指定目录

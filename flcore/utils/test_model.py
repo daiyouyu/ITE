@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import os
+import os, time
 from matplotlib import font_manager
 
 # ==== 中文字体配置（解决 DejaVu Sans 缺少 CJK 的告警）====
@@ -434,8 +434,11 @@ def test_model_and_plot(algo: str = "iddpg",
     # 该天在测试集内的起始索引（相对 test_env）
     day_start = plot_day_offset * 24
     agg = rollout_one_day_and_collect(test_env, model, agents, day_start_idx=day_start, dt_hours=1.0)
+    now = time.time()
+    now = time.localtime(now)
+    now = time.strftime('%Y%m%d_%H%M%S', now)
     plot_daily_stack(agg, title=f"测试集第 {plot_day_offset + 1} 天：用电与供给堆叠图（MW）",
-                     save_path=f"./result/{algo}/daily_supply_stack.png")
+                     save_path=f"./result/{now}/{algo}/daily_supply_stack.png")
 
     # 分智能体：各出一张图
     per = rollout_one_day_per_agent(test_env, model, agents, day_start_idx=day_start, dt_hours=1.0)
