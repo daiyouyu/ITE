@@ -24,6 +24,7 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True, ):
     obs_dims, action_dims, max_actions, agents = infer_dims(env)
     maddpg = MADDPG(
         obs_dims, action_dims, max_actions,
+        shared_obs_indices=[-2, -1],
         **presets.algo_kwargs
     )
 

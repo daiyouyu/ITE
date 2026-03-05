@@ -48,6 +48,7 @@ class JointReplayBuffer:
 
 class MADDPG:
     def __init__(self, obs_dims, action_dims, max_actions,
+                 shared_obs_indices=None,
                  lr_actor=1e-3, lr_critic=1e-3, gamma=0.95, tau=0.01,
                  batch_size=256, buffer_size=100000):
         """
@@ -59,6 +60,7 @@ class MADDPG:
         self.obs_dims = obs_dims
         self.action_dims = action_dims
         self.max_actions = max_actions
+        self.shared_obs_indices = shared_obs_indices  # 保存共享索引
 
         self.actors = []
         self.actor_targets = []
@@ -77,17 +79,19 @@ class MADDPG:
 
         for i in range(self.n_agents):
             actor = Actor(obs_dims[i], action_dims[i], max_actions[i]).to(device)
-            # foot = actor.foot,
-            # base = actor.base,
-            # head = actor.head,
-            # actor = BaseHeadSplit(head,base,foot)
             actor_t = copy.deepcopy(actor).to(device)
             opt_a = optim.Adam(actor.parameters(), lr=lr_actor)
             self.actors.append(actor)
             self.actor_targets.append(actor_t)
             self.actor_opts.append(opt_a)
 
-            critic = Critic(total_obs, total_action).to(device)
+            # 维度 = 自己的完整观测维度 + 其他所有智能体贡献的"部分共享维度"
+            if self.shared_obs_indices is None:
+                critic_obs_dim = sum(obs_dims)  # 默认全共享
+            else:
+                # 自己的完整维度 + (总智能体数 - 1) * 共享特征的数量
+                critic_obs_dim = obs_dims[i] + (self.n_agents - 1) * len(self.shared_obs_indices)
+            critic = Critic(critic_obs_dim, total_action).to(device)
             critic_t = copy.deepcopy(critic).to(device)
             opt_c = optim.Adam(critic.parameters(), lr=lr_critic)
             self.critics.append(critic)
@@ -137,6 +141,8 @@ class MADDPG:
         rews_b_t = torch.FloatTensor(rews_b).to(device)  # shape (B, n_agents)
         dones_b_t = torch.FloatTensor(dones_b).to(device)  # shape (B, n_agents)
 
+        obs_splits = torch.split(obs_b_t, self.obs_dims, dim=1)
+        obs_splits_next = torch.split(next_obs_b_t, self.obs_dims, dim=1)
         # 计算所有 agent 的 proto（base 输出）并在 batch 维度取均值，追加到历史列表
         with torch.no_grad():
             obs_splits_all = torch.split(obs_b_t, self.obs_dims, dim=1)
@@ -149,25 +155,45 @@ class MADDPG:
         # For each agent, compute targets and update critic & actor
         self.Federated_proto = []
         for i in range(self.n_agents):
+            # ----------------------------------------
+            # 构造当前 Critic i 需要的特定观测输入
+            # ----------------------------------------
+            if self.shared_obs_indices is None:
+                critic_curr_obs = obs_b_t
+                critic_next_obs = next_obs_b_t
+            else:
+                curr_obs_list = []
+                next_obs_list = []
+                for j in range(self.n_agents):
+                    if j == i:
+                        # 对于自己，输入全部观测
+                        curr_obs_list.append(obs_splits[j])
+                        next_obs_list.append(obs_splits_next[j])
+                    else:
+                        # 对于其他智能体，只输入 shared_obs_indices 指定的特征
+                        curr_obs_list.append(obs_splits[j][:, self.shared_obs_indices])
+                        next_obs_list.append(obs_splits_next[j][:, self.shared_obs_indices])
+
+                critic_curr_obs = torch.cat(curr_obs_list, dim=1)
+                critic_next_obs = torch.cat(next_obs_list, dim=1)
             # --------------------
             # Critic update
             # --------------------
             with torch.no_grad():
                 # build next actions by actor_targets
                 next_actions = []
-                obs_splits_next = torch.split(next_obs_b_t, self.obs_dims, dim=1)
                 for j in range(self.n_agents):
                     a_next = self.actor_targets[j](obs_splits_next[j])
                     next_actions.append(a_next)
                 next_actions_cat = torch.cat(next_actions, dim=1)  # (B, total_action)
 
                 # compute target Q using agent i's critic_target
-                q_next = self.critic_targets[i](next_obs_b_t, next_actions_cat)
+                q_next = self.critic_targets[i](critic_next_obs, next_actions_cat)
                 # reward for agent i: rews_b_t[:, i:i+1]
                 td_target = rews_b_t[:, i:i + 1] + (1.0 - dones_b_t[:, i:i + 1]) * (self.gamma * q_next)
 
             # current Q
-            q_curr = self.critics[i](obs_b_t, acts_b_t)
+            q_curr = self.critics[i](critic_curr_obs, acts_b_t)
             loss_q = nn.MSELoss()(q_curr, td_target.detach())
             self.critic_opts[i].zero_grad()
             loss_q.backward()
@@ -176,7 +202,6 @@ class MADDPG:
             # --------------------
             # Actor update (policy gradient)
             # --------------------
-            obs_splits = torch.split(obs_b_t, self.obs_dims, dim=1)
             protos = []
             curr_actions = []
 
@@ -192,12 +217,13 @@ class MADDPG:
                     curr_a = self.actors[j].foot(proto).detach()
                 protos.append(proto)
                 curr_actions.append(curr_a)
+
             curr_actions_cat = torch.cat(curr_actions, dim=1)
             proto_stack = torch.stack(protos)
             proto_cat = torch.mean(proto_stack, dim=0)
 
-            # actor loss: maximize critic i's Q -> minimize -Q
-            actor_loss = -self.critics[i](obs_b_t, curr_actions_cat).mean()
+            # 修改点 4：Actor 计算 loss 时，送入的同样是经过特征截取的 critic_curr_obs
+            actor_loss = -self.critics[i](critic_curr_obs, curr_actions_cat).mean()
             self.Federated_proto.append(proto_cat)
 
             self.actor_opts[i].zero_grad()
