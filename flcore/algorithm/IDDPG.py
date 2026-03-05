@@ -167,7 +167,7 @@ class IDDPG:
 
             # 累计 batch 维度上的 proto 均值，入历史
             with torch.no_grad():
-                self.proto_history[i].append(proto_i.mean(dim=0).detach().cpu())
+                self.proto_history[i].append(act_pred.mean(dim=0).detach().cpu())
                 self.Federated_proto.append(proto_i.detach())
 
             # -------- 软更新 target --------
@@ -197,9 +197,8 @@ class IDDPG:
         with torch.no_grad():
             for i in range(self.n_agents):
                 oi = obs_b_t[:, self._obs_slices[i]]
-                out_i = self.actors[i].head(oi)
-                p_i = self.actors[i].base(out_i)
-                proto_ref.append(p_i.mean(dim=0))  # (Feat,)
+                out_i = self.actors[i](oi)
+                proto_ref.append(out_i.mean(dim=0))  # (Feat,)
 
         # 3) 基于 L1 距离的权重矩阵
         eps = 1e-8

@@ -147,13 +147,11 @@ class MADDPG:
         with torch.no_grad():
             obs_splits_all = torch.split(obs_b_t, self.obs_dims, dim=1)
             for j in range(self.n_agents):
-                out_j = self.actors[j].head(obs_splits_all[j])
-                proto_j = self.actors[j].base(out_j)
-                proto_mean_j = proto_j.mean(dim=0).detach().cpu()  # (Feat,)
+                out_j = self.actors[j](obs_splits_all[j])
+                proto_mean_j = out_j.mean(dim=0).detach().cpu()  # (Feat,)
                 self.proto_history[j].append(proto_mean_j)
 
         # For each agent, compute targets and update critic & actor
-        self.Federated_proto = []
         for i in range(self.n_agents):
             # ----------------------------------------
             # 构造当前 Critic i 需要的特定观测输入
@@ -219,12 +217,9 @@ class MADDPG:
                 curr_actions.append(curr_a)
 
             curr_actions_cat = torch.cat(curr_actions, dim=1)
-            proto_stack = torch.stack(protos)
-            proto_cat = torch.mean(proto_stack, dim=0)
 
             # 修改点 4：Actor 计算 loss 时，送入的同样是经过特征截取的 critic_curr_obs
             actor_loss = -self.critics[i](critic_curr_obs, curr_actions_cat).mean()
-            self.Federated_proto.append(proto_cat)
 
             self.actor_opts[i].zero_grad()
             actor_loss.backward()
@@ -240,7 +235,6 @@ class MADDPG:
                 p_t.data.copy_(self.tau * p.data + (1.0 - self.tau) * p_t.data)
 
     def Fed_Aggergate(self):
-        Federated_w = [[], [], [], [], []]
 
         if self.replay.size() < self.batch_size:
             return
@@ -264,9 +258,8 @@ class MADDPG:
         proto_ref = []  # 当前 batch 的 per-agent proto 均值 (Feat,)
         with torch.no_grad():
             for i in range(self.n_agents):
-                out_i = self.actors[i].head(obs_splits[i])
-                p_i = self.actors[i].base(out_i)
-                proto_ref.append(p_i.mean(dim=0))  # (Feat,)
+                out_i = self.actors[i](obs_splits[i])
+                proto_ref.append(out_i.mean(dim=0))  # (Feat,)
 
         # 3) 计算联邦权重矩阵 W[i][j]  ~  1 / ( L1(proto_ref[i], avg_proto[j]) + eps )
         eps = 1e-8
