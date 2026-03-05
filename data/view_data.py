@@ -39,6 +39,7 @@ def view_HGR_data():
         ax.legend()  # 每个子图单独显示图例
 
     plt.tight_layout()
+    plt.savefig('./ITE_data.png', dpi=600)
     plt.show()
 
 
@@ -89,6 +90,7 @@ def view_P_data():
     plt.legend(loc='best')
 
     plt.tight_layout()
+    plt.savefig('./ITE_data.png', dpi=600)
     plt.show()
 
 
