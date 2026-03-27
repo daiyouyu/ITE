@@ -104,7 +104,7 @@ def load_ITE_data(
 
     # 先把需要的列抽出来并数值化
     g_elec_res = to_float(g_df, elec_res_cols)
-    g_elec_ind = to_float(g_df, elec_ind_cols)
+    g_elec_ind = to_float(g_df, elec_ind_cols) * 2.1
     g_elec_com = to_float(g_df, elec_com_cols)
     g_elec_pub = to_float(g_df, elec_pub_cols)
 
@@ -189,13 +189,21 @@ def load_ITE_data(
     ])
 
     # 可再生功率 (4, T) —— 你原来等比复制
-    R = np.vstack([
-        wind_1H.values * 0.125 + solar_1H * 1,
-        wind_1H.values * 1 + solar_1H * 0.50,
-        wind_1H.values * 0.4 + solar_1H * 0.25,
-        wind_1H.values * 0.125 + solar_1H * 0.0,
+    R_wind = np.vstack([
+        wind_1H.values * 0.25,
+        wind_1H.values * 0.75,
+        wind_1H.values * 0.4,
+        wind_1H.values * 0.25,
     ])
 
+    R_solar = np.vstack([
+        solar_1H * 1,
+        solar_1H * 0.50,
+        solar_1H * 0.25,
+        solar_1H * 0.0,
+    ])
+
+    R = R_wind + R_solar
     # 电价 (4, T)
     if price_1H is not None:
         P = np.vstack([price_1H.values,
@@ -218,6 +226,8 @@ def load_ITE_data(
             'G_L': G_L[i, :],  # MW，小时均值
             'R': R[i, :],  # MW，小时均值
             'P': P[i, :] * 1000,  # 元/MWh，小时均值
+            'R_wind': R_wind[i, :],
+            'R_solar': R_solar[i, :],
             'sin_h': sin_h,
             'cos_h': cos_h
         })

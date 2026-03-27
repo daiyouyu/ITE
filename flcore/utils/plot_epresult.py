@@ -95,7 +95,7 @@ try:
     rew = np.load("D:\\ITE\\result\\20260306\\result_arrays.npz")
 
     # 处理数据
-    keys = ["iddpg", "Fed_iddpg", "maddpg", "Fed_maddpg"]
+    keys = ["iddpg", "Fed_iddpg", "maddpg"]
     # 确保 key 存在于文件中，避免报错
     data = {}
     for key in keys:
