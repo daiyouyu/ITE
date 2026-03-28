@@ -92,7 +92,7 @@ def draw_result(rewards_record):
 # ==== 加载数据并调用 ====
 # 请确保路径正确
 try:
-    rew = np.load("D:\\ITE\\result\\20260306\\result_arrays.npz")
+    rew = np.load("D:\\ITE\\result\\20260328\\result_arrays.npz")
 
     # 处理数据
     keys = ["iddpg", "Fed_iddpg", "maddpg"]
