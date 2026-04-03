@@ -92,7 +92,7 @@ def draw_result(rewards_record):
 # ==== 加载数据并调用 ====
 # 请确保路径正确
 try:
-    rew = np.load("D:\\ITE\\result\\20260328\\result_arrays.npz")
+    rew = np.load("D:\\ITE\\result\\20260329\\result_arrays.npz")
 
     # 处理数据
     keys = ["iddpg", "Fed_iddpg", "maddpg"]
@@ -109,7 +109,7 @@ try:
 
     data_500 = {}
     for key, val in data.items():
-        data_500[key] = val[0:500]
+        data_500[key] = val[0:1000]
     draw_result(data_500)
 
 except Exception as e:

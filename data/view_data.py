@@ -188,11 +188,11 @@ def view_R_data():
         ax.legend(frameon=False, fontsize=12, loc='upper right')
 
     plt.tight_layout()
-    plt.savefig('./ITE_R_data.svg', dpi=600, bbox_inches='tight')
+    # plt.savefig('./ITE_R_data.svg', dpi=600, bbox_inches='tight')
     plt.show()
 
 
 if __name__ == '__main__':
-    view_HGR_data()
-# view_P_data()
-# view_R_data()
+    # view_HGR_data()
+    # view_P_data()
+    view_R_data()
