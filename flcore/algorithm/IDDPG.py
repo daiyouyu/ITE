@@ -242,7 +242,8 @@ class IDDPG:
                 w = w / (w.sum() + 1e-12)
                 Federated_w.append(w)
 
-            Federated_w_return = np.array(Federated_w)
+            # 修改：只返回每个代理在聚合中对自己的权重分配 (即对角线元素)
+            Federated_w_return = np.array([Federated_w[i][i] for i in range(self.n_agents)])
 
             # 4) 依据权重做参数聚合，分别得到每个 agent 的新 actor
             with torch.no_grad():

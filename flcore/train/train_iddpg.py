@@ -32,7 +32,7 @@ def train_iddpg(episodes=1000, train=7, test=1, Federated=True, fed_method='DSFA
     )
 
     rewards, test_rewards = [], []
-    # This list will store the weight matrix at each federation step
+    # This list will store the average weight matrix for each episode
     federation_weights_history = []
 
     # --- Training Loop ---
@@ -40,6 +40,9 @@ def train_iddpg(episodes=1000, train=7, test=1, Federated=True, fed_method='DSFA
         start_time = time.time()
         obs, _ = env.reset()
         ep_rew = np.zeros(len(agents), dtype=np.float32)
+        
+        # List to store weights for the current episode
+        episode_weights = []
         
         # (Your existing ep_info dictionary setup remains unchanged)
         ep_info = {a: {k: 0.0 for k in [
@@ -82,8 +85,8 @@ def train_iddpg(episodes=1000, train=7, test=1, Federated=True, fed_method='DSFA
                 agg_weights = iddpg.Fed_Aggergate(method=fed_method)
                 
                 # If DSFA was used, weights are returned and we record them
-                if agg_weights is not None:
-                    federation_weights_history.append(agg_weights)
+                if agg_weights is not None: # If weights are returned, store them for this episode
+                    episode_weights.append(agg_weights)
 
             obs = next_obs
             ep_rew += np.array(rew_list, dtype=np.float32)
@@ -99,6 +102,11 @@ def train_iddpg(episodes=1000, train=7, test=1, Federated=True, fed_method='DSFA
                 break
 
         # --- End of Episode ---
+        # Calculate and store the average weights for this episode
+        if episode_weights:
+            avg_episode_weights = np.mean(episode_weights, axis=0)
+            federation_weights_history.append(avg_episode_weights)
+
         rewards.append((ep_rew / max(1, t)) * 24)
         ep_time = (time.time() - start_time) / 60
         print(f"Fed:{Federated}_iddpg ({fed_method})\n"

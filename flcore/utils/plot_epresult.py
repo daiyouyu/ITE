@@ -92,10 +92,10 @@ def draw_result(rewards_record):
 # ==== 加载数据并调用 ====
 # 请确保路径正确
 try:
-    rew = np.load("D:\\ITE\\result\\20260329\\result_arrays.npz")
-
+    #rew = np.load("D:\\ITE\\result\\20260403\\result_arrays.npz")
+    rew = np.load("result/20260403/result_arrays.npz")
     # 处理数据
-    keys = ["iddpg", "Fed_iddpg", "maddpg"]
+    keys = ["FedAvg_iddpg", "Fed_iddpg"]
     # 确保 key 存在于文件中，避免报错
     data = {}
     for key in keys:

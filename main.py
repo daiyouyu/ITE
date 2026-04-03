@@ -6,17 +6,23 @@ from flcore.utils.parallel_train import parallel_train_all
 if __name__ == "__main__":
     # 并行训练（推荐）
     USE_PARALLEL = True
-    EPOCHS = 500
+    EPOCHS = 1000
     TRAIN_DAYS = 365
 
     if USE_PARALLEL:
+        tasks = [
+        ('iddpg', EPOCHS , TRAIN_DAYS , True,'DSFA'),
+        ('iddpg', EPOCHS , TRAIN_DAYS , True,'FedAvg'),
+#        ('maddpg', EPOCHS , TRAIN_DAYS , False),
+#        ('maddpg', EPOCHS , TRAIN_DAYS , True)
+    ]
         print("使用并行训练模式...")
-        results = parallel_train_all(episodes=EPOCHS, train_days=TRAIN_DAYS, n_workers=2)
+        results = parallel_train_all(n_workers=2,tasks=tasks)
 
-        iddpg = np.array(results['iddpg'][0]).T
         Fed_iddpg = np.array(results['Fed_iddpg'][0]).T
-        maddpg = np.array(results['maddpg'][0]).T
-        Fed_maddpg = np.array(results['Fed_maddpg'][0]).T
+        FedAvg_iddpg= np.array(results['FedAvg_iddpg'][0]).T
+#      maddpg = np.array(results['maddpg'][0]).T
+#     Fed_maddpg = np.array(results['Fed_maddpg'][0]).T
     else:
         # 原有串行训练
         from flcore.train.train_iddpg import train_iddpg
