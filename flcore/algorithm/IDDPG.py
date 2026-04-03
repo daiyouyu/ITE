@@ -176,61 +176,95 @@ class IDDPG:
             for p, p_t in zip(self.critics[i].parameters(), self.critic_targets[i].parameters()):
                 p_t.data.copy_(self.tau * p.data + (1.0 - self.tau) * p_t.data)
 
-    # 与 MADDPG 一致的联邦聚合：按 proto 距离自适应加权聚合 actor 参数
-    def Fed_Aggergate(self):
+    def Fed_Aggergate(self, method='DSFA'):
+        """
+        联邦聚合方法：支持 'DSFA' (自适应去中心化) 和 'FedAvg' (平均聚合)
+        """
         if self.replay.size() < self.batch_size:
-            return
-        if any(len(h) == 0 for h in self.proto_history):
-            return
+            return None
+        if any(len(h) == 0 for h in self.proto_history) and method == 'DSFA':
+            return None
 
-        # 1) 历史 proto 平均
-        avg_proto = []
-        for j in range(self.n_agents):
-            hist = self.proto_history[j]  # list of cpu tensors (Feat,)
-            avg = torch.stack(hist, dim=0).mean(dim=0).to(device)
-            avg_proto.append(avg)
+        Federated_w_return = None
 
-        # 2) 用当前一个 batch 估计“参考 proto”
-        obs_b, _, _, _, _ = self.replay.sample(self.batch_size)
-        obs_b_t = torch.FloatTensor(obs_b).to(device)
-        proto_ref = []
-        with torch.no_grad():
-            for i in range(self.n_agents):
-                oi = obs_b_t[:, self._obs_slices[i]]
-                out_i = self.actors[i](oi)
-                proto_ref.append(out_i.mean(dim=0))  # (Feat,)
-
-        # 3) 基于 L1 距离的权重矩阵
-        eps = 1e-8
-        Federated_w = []
-        for i in range(self.n_agents):
-            row = []
-            for j in range(self.n_agents):
-                d = F.l1_loss(proto_ref[i], avg_proto[j], reduction='mean').item()
-                row.append(1.0 / (d + eps))
-            w = np.array(row, dtype=np.float64)
-            w = w / (w.sum() + 1e-12)
-            Federated_w.append(w)
-
-        # 4) 依据权重做参数聚合，分别得到每个 agent 的新 actor
-        with torch.no_grad():
-            new_actors = []
-            for i in range(self.n_agents):
+        if method == 'FedAvg':
+            # === FedAvg 逻辑 ===
+            # 将所有 actor 参数简单平均
+            with torch.no_grad():
                 for p in self.template.parameters():
                     p.data.zero_()
+                
+                # 累加参数
                 for j in range(self.n_agents):
-                    w_ij = Federated_w[i][j]
                     for tp, pj in zip(self.template.parameters(), self.actors[j].parameters()):
-                        tp.data.add_(pj.data, alpha=w_ij)
-                new_actors.append(copy.deepcopy(self.template))
+                        tp.data.add_(pj.data)
+                
+                # 计算平均值
+                for tp in self.template.parameters():
+                    tp.data.div_(self.n_agents)
+                
+                # 回写到所有本地 actor
+                for i in range(self.n_agents):
+                    for p, avg_p in zip(self.actors[i].parameters(), self.template.parameters()):
+                        p.data.copy_(avg_p.data)
+                        
+            # 清空历史以保持与原有逻辑一致
+            self.proto_history = [[] for _ in range(self.n_agents)]
 
-            # 回写
+        elif method == 'DSFA':
+            # === DSFA 原有逻辑 ===
+            # 1) 历史 proto 平均
+            avg_proto = []
+            for j in range(self.n_agents):
+                hist = self.proto_history[j]  # list of cpu tensors (Feat,)
+                avg = torch.stack(hist, dim=0).mean(dim=0).to(device)
+                avg_proto.append(avg)
+
+            # 2) 用当前一个 batch 估计“参考 proto”
+            obs_b, _, _, _, _ = self.replay.sample(self.batch_size)
+            obs_b_t = torch.FloatTensor(obs_b).to(device)
+            proto_ref = []
+            with torch.no_grad():
+                for i in range(self.n_agents):
+                    oi = obs_b_t[:, self._obs_slices[i]]
+                    out_i = self.actors[i](oi)
+                    proto_ref.append(out_i.mean(dim=0))  # (Feat,)
+
+            # 3) 基于 L1 距离的权重矩阵
+            eps = 1e-8
+            Federated_w = []
             for i in range(self.n_agents):
-                for p, np_ in zip(self.actors[i].parameters(), new_actors[i].parameters()):
-                    p.data.copy_(np_.data)
+                row = []
+                for j in range(self.n_agents):
+                    d = F.l1_loss(proto_ref[i], avg_proto[j], reduction='mean').item()
+                    row.append(1.0 / (d + eps))
+                w = np.array(row, dtype=np.float64)
+                w = w / (w.sum() + 1e-12)
+                Federated_w.append(w)
 
-        # 5) 清空历史
-        self.proto_history = [[] for _ in range(self.n_agents)]
+            Federated_w_return = np.array(Federated_w)
+
+            # 4) 依据权重做参数聚合，分别得到每个 agent 的新 actor
+            with torch.no_grad():
+                new_actors = []
+                for i in range(self.n_agents):
+                    for p in self.template.parameters():
+                        p.data.zero_()
+                    for j in range(self.n_agents):
+                        w_ij = Federated_w[i][j]
+                        for tp, pj in zip(self.template.parameters(), self.actors[j].parameters()):
+                            tp.data.add_(pj.data, alpha=w_ij)
+                    new_actors.append(copy.deepcopy(self.template))
+
+                # 回写
+                for i in range(self.n_agents):
+                    for p, np_ in zip(self.actors[i].parameters(), new_actors[i].parameters()):
+                        p.data.copy_(np_.data)
+
+            # 5) 清空历史
+            self.proto_history = [[] for _ in range(self.n_agents)]
+
+        return Federated_w_return
 
     # 保存 / 加载（对齐 MADDPG）
     def save(self, prefix="iddpg",Fed=False):
