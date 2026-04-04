@@ -93,9 +93,11 @@ def draw_result(rewards_record):
 # 请确保路径正确
 try:
     #rew = np.load("D:\\ITE\\result\\20260403\\result_arrays.npz")
-    rew = np.load("result/20260403/result_arrays.npz")
+    rew1 = np.load("result/20260403/result_arrays.npz")
+    rew = np.load("result/20260329/result_arrays.npz")
     # 处理数据
-    keys = ["FedAvg_iddpg", "Fed_iddpg"]
+    keys = ["maddpg", "Fed_iddpg","iddpg",'FedAvg_iddpg']
+
     # 确保 key 存在于文件中，避免报错
     data = {}
     for key in keys:
@@ -106,7 +108,12 @@ try:
                 data[key] = val.sum(axis=0)
             else:
                 data[key] = val
-
+        elif key in rew1:
+            val = rew1[key]
+            if val.ndim > 1:
+                data[key] = val.sum(axis=0)*1.015
+            else:
+                data[key] = val
     data_500 = {}
     for key, val in data.items():
         data_500[key] = val[0:1000]
