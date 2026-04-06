@@ -161,7 +161,7 @@ def inspect_npy_file(file_path: str):
 if __name__ == "__main__":
     # 你想要检查的 .npy 文件的路径
     # 这是一个示例路径，请根据你的实际文件路径进行修改
-    target_file = '/home/ubuntu/ITE/result/20260403/fed_weights_DSFA_235608.npy'
+    target_file = '/home/ubuntu/ITE/result/20260404/fed_weights_DSFA_194147.npy'
     
     if os.path.exists(target_file):
         # 调用函数进行检查
