@@ -1,33 +1,45 @@
-# /home/ubuntu/ITE/flcore/utils/file_inspector.py
-
 import numpy as np
 import os
 import matplotlib.pyplot as plt
 from matplotlib import font_manager
 
-# ==== 中文字体配置 (确保中文标签正确显示) ====
-_preferred_fonts = [
-    r"C:\Windows\Fonts\msyh.ttc",
-    r"C:\Windows\Fonts\simhei.ttf",
-    r"/System/Library/Fonts/PingFang.ttc",
-    r"/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", # For Ubuntu
+plt.style.use('seaborn-v0_8-whitegrid')
+# ===================== 真正有效的中文配置 =====================
+plt.rcParams['axes.unicode_minus'] = False  # 正常显示负号
+
+# 按优先级排列的中文字体列表（把 Windows 常见字体放前面）
+FONT_LIST = [
+    "Microsoft YaHei",  # 微软雅黑 (Windows)
+    "SimHei",  # 黑体 (Windows)
+    "PingFang SC",  # 苹方 (macOS)
+    "WenQuanYi Micro Hei",  # 文泉驿微米黑 (Linux)
+    "Noto Sans CJK SC",  # 思源黑体
 ]
-for _fp in _preferred_fonts:
-    try:
-        if os.path.exists(_fp):
-            font_manager.fontManager.addfont(_fp)
-            plt.rcParams['font.sans-serif'] = [os.path.splitext(os.path.basename(_fp))[0]] + plt.rcParams['font.sans-serif']
-            plt.rcParams['axes.unicode_minus'] = False # 解决负号显示问题
-            break
-    except Exception:
-        pass
+
+# 获取系统中所有真实安装的字体名称
+installed_fonts = [f.name for f in font_manager.fontManager.ttflist]
+
+# 寻找第一个存在的字体并设置
+selected_font = None
+for font in FONT_LIST:
+    if font in installed_fonts:
+        selected_font = font
+        break
+
+if selected_font:
+    plt.rcParams['font.family'] = 'sans-serif'
+    plt.rcParams['font.sans-serif'] = [selected_font]
+    print(f"[*] Matplotlib 中文配置成功，使用字体: {selected_font}")
+else:
+    print("[!] 警告: 未在系统中检测到常见的中文字体，图表中文可能显示为方块。")
+
 
 def inspect_npy_file(file_path: str):
     """
     加载并检查一个 .npy 文件，打印其类型、形状、数据类型和内容摘要。
     这个函数特别优化了对包含字典的 .npy 文件的检查（在联邦学习中很常见）。
     新增了对常规 NumPy 数组（1D或2D）的可视化绘图功能。
-    
+
     Args:
         file_path (str): .npy 文件的路径。
     """
@@ -62,7 +74,7 @@ def inspect_npy_file(file_path: str):
                     print(f"    - 数据类型 (Dtype): {weights.dtype}")
                 else:
                     print(f"  - 层/键 '{layer_name}': 类型为 {type(weights)}, 不是 NumPy 数组。")
-        
+
         # 检查是否为常规的 NumPy 数组
         elif isinstance(data, np.ndarray):
             print("文件内容: 这是一个常规的 NumPy 数组。")
@@ -84,50 +96,45 @@ def inspect_npy_file(file_path: str):
                 print("\n正在生成折线图...")
                 try:
                     # --- 美化改进 ---
-                    plt.style.use('seaborn-v0_8-whitegrid')
                     fig, ax = plt.subplots(figsize=(14, 8))
 
                     # 定义一个好看的颜色循环
-                    # 使用用户指定的颜色，并将其归一化到 [0, 1] 范围
                     custom_colors_rgb_255 = [
-                        (31, 119, 180),  # 深蓝
-                        (255, 127, 14),  # 橙色
-                        (44, 160, 44),   # 绿色
-                        (214, 39, 40)    # 红色
+                        (31, 119, 180),
+                        (255, 127, 14),
+                        (44, 160, 44),
+                        (214, 39, 40)
                     ]
                     colors = [(r / 255., g / 255., b / 255.) for r, g, b in custom_colors_rgb_255]
 
                     def simple_moving_average(data, window_size=20):
-                        """计算移动平均值，并返回平滑后的数据和对应的x轴坐标"""
                         if len(data) < window_size:
                             return data, np.arange(len(data))
-                        smoothed = np.convolve(data, np.ones(window_size)/window_size, mode='valid')
+                        smoothed = np.convolve(data, np.ones(window_size) / window_size, mode='valid')
                         x_axis = np.arange(len(smoothed)) + (window_size - 1) // 2
                         return smoothed, x_axis
-                    
-                    # 如果是二维数组，每一列作为一条线
+
                     if plot_data.ndim == 2:
                         num_lines = plot_data.shape[1]
                         for i in range(num_lines):
                             raw_data = plot_data[:, i]
-                            current_color = colors[i % len(colors)] # 循环使用这四种颜色
-                            ax.plot(raw_data, color=current_color, alpha=0.3, linewidth=1.0) # 原始数据稍微透明
+                            current_color = colors[i % len(colors)]
+                            ax.plot(raw_data, color=current_color, alpha=0.3, linewidth=1.0)
                             smoothed_data, smoothed_x = simple_moving_average(raw_data)
-                            ax.plot(smoothed_x, smoothed_data, color=current_color, label=f'Agent {i+1}', linewidth=2.5) # 平滑曲线稍微粗一些
+                            ax.plot(smoothed_x, smoothed_data, color=current_color, label=f'Agent {i + 1}',
+                                    linewidth=2.5)
                         ax.legend(title="智能体", frameon=True, shadow=True, loc='best', fontsize=10)
 
-                    # 如果是一维数组，直接绘制
-                    else: # plot_data.ndim == 1 (如果只有一个Agent，或者数据本身就是1D)
+                    else:
                         raw_data = plot_data
                         ax.plot(raw_data, color=colors[0], alpha=0.3, linewidth=1.0)
                         smoothed_data, smoothed_x = simple_moving_average(raw_data)
                         ax.plot(smoothed_x, smoothed_data, color=colors[0], label='权重值 (平滑)', linewidth=2.5)
                         ax.legend(frameon=True, shadow=True)
 
-                    # --- 统一设置美化选项 ---
-                    ax.set_title(f'联邦权重历史: {os.path.basename(file_path)}', fontsize=16, fontweight='bold', pad=20)
-                    ax.set_xlabel("Episode / 轮次", fontsize=12)
-                    ax.set_ylabel("对角线权重值", fontsize=12)
+                    ax.set_title(f'联邦权重历史', fontsize=16, fontweight='bold', pad=20)
+                    ax.set_xlabel("Episode ", fontsize=12)
+                    ax.set_ylabel("权重值", fontsize=12)
                     ax.spines['top'].set_visible(False)
                     ax.spines['right'].set_visible(False)
                     fig.tight_layout()
@@ -138,33 +145,24 @@ def inspect_npy_file(file_path: str):
                     print(f"绘制图形时发生错误: {plot_e}")
             else:
                 print(f"\n数组维度 ({data.ndim}) 暂不支持绘图。")
-        
-        # 其他未知类型
+
         else:
             print("文件内容: 这是一个未知的数据类型。")
             print("尝试直接打印内容...")
             print(data)
 
         print("-" * 40)
-        # 如果你想查看完整的权重数据，可以取消下面这行代码的注释。
-        # 注意：如果文件很大，这会打印大量数据。
-        # print("完整内容:\n", data)
 
     except Exception as e:
         print(f"读取或解析文件时发生错误: {e}")
-    
+
     finally:
         print("--- 检查结束 ---")
 
 
-
 if __name__ == "__main__":
-    # 你想要检查的 .npy 文件的路径
-    # 这是一个示例路径，请根据你的实际文件路径进行修改
-    target_file = '/home/ubuntu/ITE/result/20260404/fed_weights_DSFA_194147.npy'
-    
+    target_file = 'D:\\ITE\\result/20260404/fed_weights_DSFA_194147.npy'
     if os.path.exists(target_file):
-        # 调用函数进行检查
         inspect_npy_file(target_file)
     else:
         print(f"错误: 示例文件未找到 '{target_file}'")

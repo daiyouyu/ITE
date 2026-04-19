@@ -471,7 +471,7 @@ def test_model_and_plot(algo: str = "iddpg",
                         gamma: float = 0.99,
                         tau: float = 0.01,
                         batch_size: int = 256,
-                        buffer_size: int = 200_000) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+                        buffer_size: int = 200_000) -> Tuple[List[np.ndarray], List[np.ndarray], Dict[str, float]]:
     """
     1) 构建训练/测试环境
     2) 用已训练好的 model 策略在测试集上前向评估
@@ -512,11 +512,20 @@ def test_model_and_plot(algo: str = "iddpg",
     test_rewards = []
     test_obs, _ = test_env.reset()
     ep_rew = np.zeros(len(agents), dtype=np.float32)
+
+    # === 统计 CO2 成本 ===
+    co2_costs = {a: 0.0 for a in agents}
+
     for _ in range(len(test_idx)):
         al = model.select_actions(_by_agents(test_obs, agents), noise_scale=0.0)
         nd = {a: al[i] for i, a in enumerate(agents)}
         test_next_obs, test_rew_dict, test_term_dict, test_trunc_dict, _info = test_env.step(nd)
         ep_rew += np.array(_by_agents(test_rew_dict, agents), dtype=np.float32)
+
+        # 累加每个 agent 的 co2_cost
+        for a in agents:
+            co2_costs[a] += _info[a].get("co2_cost", 0.0)
+
         test_obs = test_next_obs
         if all(bool(test_term_dict[a]) or bool(test_trunc_dict[a]) for a in agents):
             break
@@ -547,7 +556,7 @@ def test_model_and_plot(algo: str = "iddpg",
     print(f"Saved plot -> {G_grid_path}")
     for p in saved_files:
         print(f"Saved plot -> {p}")
-    return [], test_rewards
+    return [], test_rewards, co2_costs
 
 
 if __name__ == "__main__":
@@ -571,6 +580,7 @@ if __name__ == "__main__":
         {'algo': 'iddpg', 'Fed': True},
         {'algo': 'iddpg', 'Fed': False},
         {'algo': 'maddpg', 'Fed': False},
+        {'algo': 'FedAvg', 'Fed': True},
     ]
 
     # 遍历每一组参数并执行测试
@@ -579,7 +589,7 @@ if __name__ == "__main__":
         print(f"当前参数: {params}")
 
         # 调用函数，传递当前遍历的参数
-        _, re = test_model_and_plot(
+        _, re, co2_costs = test_model_and_plot(
             algo=params['algo'],  # 从遍历的组合中取
             Fed=params['Fed'],  # 从遍历的组合中取
             train=args.train_days,
@@ -590,4 +600,9 @@ if __name__ == "__main__":
         # 输出结果
         total_reward = sum(re)
         print(f"累计奖励总和: {total_reward}")
+        print(f"====================================")
+        print("各个 Agent 的 CO2 排放成本:")
+        for a, cost in co2_costs.items():
+            print(f"  Agent {a}: {cost:.2f}")
+        print(f"  系统总计: {sum(co2_costs.values()):.2f}")
         print(f"====================================\n")

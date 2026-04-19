@@ -92,16 +92,22 @@ def draw_result(rewards_record):
 # ==== 加载数据并调用 ====
 # 请确保路径正确
 try:
-    #rew = np.load("D:\\ITE\\result\\20260403\\result_arrays.npz")
-    rew1 = np.load("result/20260404/result_arrays.npz")
-    rew = np.load("result/20260329/result_arrays.npz")
+    # rew = np.load("D:\\ITE\\result\\20260403\\result_arrays.npz")
+    rew1 = np.load("D:\\ITE\\result/20260404/result_arrays.npz")
+    rew = np.load("D:\\ITE\\result/20260329/result_arrays.npz")
     # 处理数据
-    keys = ["maddpg", "Fed_iddpg","iddpg",'FedAvg']
-    #keys = [ "DSFA",'FedAvg']
+    keys = ["maddpg", "Fed_iddpg", "iddpg", 'FedAvg']
+    # keys = [ "DSFA",'FedAvg']
     # 确保 key 存在于文件中，避免报错
     data = {}
     for key in keys:
         if key in rew:
+            if key == "Fed_iddpg":
+                val = rew[key]
+                if val.ndim > 1:
+                    data["OURS"] = val.sum(axis=0)
+                else:
+                    data["OURS"] = val
             # 如果是二维数组则求和，如果是一维则直接使用
             val = rew[key]
             if val.ndim > 1:
@@ -111,7 +117,7 @@ try:
         elif key in rew1:
             val = rew1[key]
             if val.ndim > 1:
-                data[key] = val.sum(axis=0)*1.015
+                data[key] = val.sum(axis=0) * 1.015
             else:
                 data[key] = val
     data_500 = {}

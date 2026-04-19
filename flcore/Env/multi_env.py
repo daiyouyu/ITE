@@ -171,11 +171,12 @@ class BatteryEnvSingle(gym.Env):
         # 本地成本（不含购售电；电费由协调器做市场结算）
         soc_cost = self.deg_c * abs(self.P_es)  # 折旧
         ##锅炉
-        boiler_cost = self._boiler_cost(P_boiler_e)
+        boiler_cost, co2_boiler = self._boiler_cost(P_boiler_e)
         ##CHP成本
-        CHP_cost = self._CHP_cost(P_CHP_e, P_CHP_h)
+        CHP_cost, co2_CHP = self._CHP_cost(P_CHP_e, P_CHP_h)
         ##HB成本
-        HB_cost = self._HB_cost(P_HB_h)
+        HB_cost, co2_HB = self._HB_cost(P_HB_h)
+        co2_cost = co2_CHP + co2_HB + co2_boiler
         a_boiler = boiler_cost / (P_boiler_e + 0.0000001)
         a_CHP = CHP_cost / ((P_CHP_h + P_CHP_e) + 0.0000001)
         a_HB = HB_cost / (P_HB_h + 0.0000001)
@@ -241,6 +242,7 @@ class BatteryEnvSingle(gym.Env):
             "ask_price": ask_price,  # 售电报价（$/MWh）
             "need_price": need_price,
             "demand_MW": demand_MW,  # 购电需求（MW）
+            "co2_cost": co2_cost
         }
         return obs_next, float(reward_placeholder), bool(done), False, info
 
@@ -274,8 +276,10 @@ class BatteryEnvSingle(gym.Env):
         b = self.boiler_b
         c = self.boiler_c
         boiler_cost = a * P * P + b * P + c
+        k_Boiler = 0.008
+        cco2_cost = k_Boiler * boiler_cost * self.cco2
 
-        return boiler_cost
+        return boiler_cost, cco2_cost
 
     # 定义热电联产模块
     def _CHP_block(self, a_norm: float):
@@ -302,7 +306,7 @@ class BatteryEnvSingle(gym.Env):
         k_CHP = 0.005
         CHP_cost = a * CHP_e * CHP_e + b * CHP_h * CHP_h + c * CHP_e * CHP_h + d * CHP_e + e * CHP_h + f
         cco2_cost = k_CHP * CHP_e * self.cco2
-        return CHP_cost + cco2_cost
+        return CHP_cost + cco2_cost, cco2_cost
 
     # 定义热泵模块
     def _HB_block(self, a_norm: float):
@@ -319,7 +323,7 @@ class BatteryEnvSingle(gym.Env):
         k_HB = 0.008
         HB_cost = a * HB_h * HB_h + b * HB_h + c
         cco2_cost = HB_h * k_HB * self.cco2
-        return HB_cost + cco2_cost
+        return HB_cost + cco2_cost, cco2_cost
 
     def render(self):
         pass
