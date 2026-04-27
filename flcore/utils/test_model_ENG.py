@@ -64,7 +64,7 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
         if all(bool(term[a]) or bool(trunc[a]) for a in agents):
             break
 
-    hours = 48
+    hours = 24
     agg = {
         'demand': np.zeros(hours, dtype=np.float32),
         'renew': np.zeros(hours, dtype=np.float32),
@@ -83,20 +83,21 @@ def rollout_one_day_and_collect(env: MultiBatteryCoordinator,
         action_dict = {a: acts[i] for i, a in enumerate(agents)}
         next_obs, rew_dict, term_dict, trunc_dict, info_dict = env.step(action_dict)
 
-        L = 0.0;
-        R = 0.0;
-        bat_dis = 0.0;
+        L = 0.0
+        R = 0.0
+        bat_dis = 0.0
         boiler = 0.0
-        m_buy_MWh = 0.0;
-        grid_buy_MWh = 0.0;
+        P_CHP_e = 0.0
+        m_buy_MWh = 0.0
+        grid_buy_MWh = 0.0
         dump_MWh = 0.0
         for aid in agents:
             inf = info_dict[aid]
             L += float(inf.get('G_demand', 0.0))
             R += float(inf.get('newpower_gen', 0.0))
             p_bat = float(inf.get('p_bat', 0.0))
-            P_CHP_e = float(inf.get('P_CHP_e', 0.0))
-            bat_dis += max(0.0, p_bat)
+            bat_dis += p_bat
+            P_CHP_e += max(0.0, float(inf.get('P_CHP_e', 0.0)))
             boiler += max(0.0, float(inf.get('P_boiler_e', 0.0)))
             m_buy_MWh += float(inf.get('market_buy_MWh', 0.0))
             grid_buy_MWh += float(inf.get('grid_buy_MWh', 0.0))
@@ -176,67 +177,208 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
 # ==========================================
 
 E_COLORS = {
-    'R_wind': '#4DB6AC',
-    'R_solar': '#FFEE58',
-    'bat_dis': '#FFC107',
-    'boiler': '#FF7043',
-    'P_CHP_e': '#CE93D8',
-    'market_buy': '#29B6F6',
-    'grid_buy': '#E53935',
-    'demand': '#333333'
+    'grid_buy': "#AC1400",
+    'market_buy': '#00B894',
+    'R_solar': '#F6C445',
+    'R_wind': '#2D9CDB',
+    'P_CHP_e': '#34495E',
+    'boiler': '#E67E22',
+    'bat_dis': '#8E44AD',
+    'demand': '#1F3A8A'
 }
 
 H_COLORS = {
-    'P_CHP_h': '#CE93D8',
-    'P_HB_h': '#FF9800',
-    'h_grid_buy': '#E53935',
-    'demand': '#333333'
+    'P_CHP_h': '#5B8FF9',
+    'P_HB_h': '#61DDAA',
+    'h_grid_buy': '#F6BD16',
+    'demand': '#C0392B'
 }
 
+AGENT_PROFILE_NAMES = [
+    "Residential Area",
+    "Renewable Energy Park",
+    "Residential Area",
+    "Industrial Park",
+]
 
-def _apply_modern_style(ax):
+plt.rcParams.update({
+    'font.family': 'sans-serif',
+    'font.sans-serif': ['DejaVu Sans', 'Arial', 'Liberation Sans'],
+    'axes.titlesize': 14,
+    'axes.labelsize': 12,
+    'legend.fontsize': 10,
+})
+
+
+def _agent_profile_name(agent_id: str, fallback_idx: int) -> str:
+    try:
+        idx = int(str(agent_id).split('_')[-1])
+    except (ValueError, IndexError):
+        idx = fallback_idx
+    if 0 <= idx < len(AGENT_PROFILE_NAMES):
+        return AGENT_PROFILE_NAMES[idx]
+    return f"Agent {fallback_idx + 1}"
+
+
+def _set_hour_ticks(ax, hours: int) -> None:
+    tick_positions = np.arange(0, hours, 2)
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels([f"{h + 1}:00" for h in tick_positions])
+
+
+def _apply_reference_style(ax, y_label: str = "Power (MW)") -> None:
+    ax.set_facecolor('white')
+    ax.grid(axis='y', linestyle=':', linewidth=0.9, alpha=0.95, color='#C3CBD8', zorder=0)
+    ax.grid(axis='x', visible=False)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.spines['left'].set_color('#cccccc')
-    ax.spines['bottom'].set_color('#cccccc')
-    ax.grid(axis='y', linestyle='--', alpha=0.4, color='#888888', zorder=0)
-    ax.tick_params(colors='#555555', labelsize=10)
-    ax.set_ylabel('Power (MW)', fontsize=11, color='#333333')
+    ax.spines['left'].set_color('#5B6473')
+    ax.spines['bottom'].set_color('#5B6473')
+    ax.spines['left'].set_linewidth(1.0)
+    ax.spines['bottom'].set_linewidth(1.0)
+    ax.tick_params(axis='both', labelsize=10, colors='#2F3A4B')
+    ax.axhline(0.0, color='#8B95A5', linewidth=0.9, zorder=1)
+    ax.set_ylabel(y_label)
+
+
+def _stack_component_areas(ax,
+                           x: np.ndarray,
+                           components: List[Tuple[str, np.ndarray, str]]) -> Tuple[List, List[str]]:
+    pos_base = np.zeros_like(x, dtype=np.float32)
+    neg_base = np.zeros_like(x, dtype=np.float32)
+    handles, labels = [], []
+
+    for label, values, color in components:
+        vals = np.asarray(values, dtype=np.float32)
+        pos = np.clip(vals, 0.0, None)
+        neg = np.clip(vals, None, 0.0)
+
+        patch = None
+        if np.any(pos):
+            bars_pos = ax.bar(
+                x, pos, bottom=pos_base, width=0.84, color=color, alpha=0.72,
+                edgecolor='white', linewidth=0.25, zorder=2
+            )
+            pos_base += pos
+            if len(bars_pos) > 0:
+                patch = bars_pos[0]
+        if np.any(neg):
+            bars_neg = ax.bar(
+                x, neg, bottom=neg_base, width=0.84, color=color, alpha=0.72,
+                edgecolor='white', linewidth=0.25, zorder=2
+            )
+            neg_base += neg
+            if patch is None and len(bars_neg) > 0:
+                patch = bars_neg[0]
+
+        if patch is not None:
+            handles.append(patch)
+            labels.append(label)
+
+    return handles, labels
+
+
+def _plot_electric_balance(ax,
+                           series: Dict[str, np.ndarray],
+                           demand_key: str = 'G_demand',
+                           panel_caption: str = "",
+                           show_legend: bool = True) -> Tuple[List, List[str]]:
+    hours = len(series[demand_key])
+    x = np.arange(hours)
+    zeros = np.zeros(hours, dtype=np.float32)
+    components = [
+        ('Upper Power Grid', np.asarray(series.get('grid_buy', zeros), dtype=np.float32), E_COLORS['grid_buy']),
+        ('P2P Electric Trading', np.asarray(series.get('market_buy', zeros), dtype=np.float32), E_COLORS['market_buy']),
+        ('Solar Power', np.asarray(series.get('R_solar', zeros), dtype=np.float32), E_COLORS['R_solar']),
+        ('Wind Power', np.asarray(series.get('R_wind', zeros), dtype=np.float32), E_COLORS['R_wind']),
+        ('CHP Electric Output', np.asarray(series.get('P_CHP_e', zeros), dtype=np.float32), E_COLORS['P_CHP_e']),
+        ('Electric Boiler Output', np.asarray(series.get('boiler', zeros), dtype=np.float32), E_COLORS['boiler']),
+        ('Battery Storage (EES)', np.asarray(series.get('bat_dis', zeros), dtype=np.float32), E_COLORS['bat_dis']),
+    ]
+
+    comp_handles, comp_labels = _stack_component_areas(ax, x, components)
+    demand_line, = ax.plot(
+        x, np.asarray(series[demand_key], dtype=np.float32),
+        color=E_COLORS['demand'], linewidth=2.1, marker='s', markersize=4.8,
+        markerfacecolor='white', markeredgewidth=1.2,
+        label='Elec. Demand', zorder=4
+    )
+
+    handles = [demand_line] + comp_handles
+    labels = ['Elec. Demand'] + comp_labels
+
+    _set_hour_ticks(ax, hours)
+    _apply_reference_style(ax, y_label='Power (MW)')
+    ax.set_xlabel("Hour (h)", labelpad=6)
+    if panel_caption:
+        ax.set_title(panel_caption, loc='left', fontsize=12, fontweight='medium', pad=6)
+
+    y_values = [np.asarray(series[demand_key], dtype=np.float32)] + [np.asarray(v, dtype=np.float32) for _, v, _ in
+                                                                     components]
+    y_min = min(float(np.min(v)) for v in y_values)
+    y_max = max(float(np.max(v)) for v in y_values)
+    if y_max <= y_min:
+        y_max = y_min + 1.0
+    pad = 0.08 * (y_max - y_min)
+    ax.set_ylim(y_min - pad, y_max + pad)
+
+    if show_legend:
+        ax.legend(handles, labels, loc='upper right', ncol=1, frameon=True, edgecolor='#D0D7E2')
+
+    return handles, labels
+
+
+def _plot_thermal_balance(ax,
+                          series: Dict[str, np.ndarray],
+                          panel_caption: str = "",
+                          show_legend: bool = True) -> Tuple[List, List[str]]:
+    hours = len(series['H_demand'])
+    x = np.arange(hours)
+    zeros = np.zeros(hours, dtype=np.float32)
+    components = [
+        ('CHP Thermal Output', np.asarray(series.get('P_CHP_h', zeros), dtype=np.float32), H_COLORS['P_CHP_h']),
+        ('Heat Pump Output', np.asarray(series.get('P_HB_h', zeros), dtype=np.float32), H_COLORS['P_HB_h']),
+        ('Heat Grid Purchase', np.asarray(series.get('h_grid_buy', zeros), dtype=np.float32), H_COLORS['h_grid_buy']),
+    ]
+
+    comp_handles, comp_labels = _stack_component_areas(ax, x, components)
+    demand_line, = ax.plot(
+        x, np.asarray(series['H_demand'], dtype=np.float32),
+        color=H_COLORS['demand'], linewidth=2.1, marker='^', markersize=5.0,
+        markerfacecolor='white', markeredgewidth=1.0,
+        label='Heat Demand', zorder=4
+    )
+
+    handles = [demand_line] + comp_handles
+    labels = ['Heat Demand'] + comp_labels
+
+    _set_hour_ticks(ax, hours)
+    _apply_reference_style(ax, y_label='Power (MW)')
+    ax.set_xlabel("Hour (h)", labelpad=6)
+    if panel_caption:
+        ax.set_title(panel_caption, loc='left', fontsize=12, fontweight='medium', pad=6)
+
+    y_values = [np.asarray(series['H_demand'], dtype=np.float32)] + [np.asarray(v, dtype=np.float32) for _, v, _ in
+                                                                     components]
+    y_min = min(float(np.min(v)) for v in y_values)
+    y_max = max(float(np.max(v)) for v in y_values)
+    if y_max <= y_min:
+        y_max = y_min + 1.0
+    pad = 0.08 * (y_max - y_min)
+    ax.set_ylim(y_min - pad, y_max + pad)
+
+    if show_legend:
+        ax.legend(handles, labels, loc='upper right', ncol=1, frameon=True, edgecolor='#D0D7E2')
+
+    return handles, labels
 
 
 def plot_daily_stack(agg: Dict[str, np.ndarray],
-                     title: str = "Intraday Electricity Demand and Supply Components (MW)",
+                     title: str = "Diurnal Electrical Power Balance Components (MW)",
                      save_path: str = "daily_supply_stack.png") -> None:
-    hours = len(agg['demand'])
-    x = np.arange(hours)
-
-    fig, ax = plt.subplots(figsize=(14, 5))
-
-    b1 = ax.bar(x, agg['R_wind'], label='Wind Power', color=E_COLORS['R_wind'], width=0.75, zorder=3)
-    bottom = agg['R_wind'].copy()
-    b2 = ax.bar(x, agg['R_solar'], bottom=bottom, label='Solar Power', color=E_COLORS['R_solar'], width=0.75, zorder=3)
-    bottom += agg['R_solar']
-    b3 = ax.bar(x, agg['bat_dis'], bottom=bottom, label='Battery Disch.', color=E_COLORS['bat_dis'], width=0.75,
-                zorder=3)
-    bottom += agg['bat_dis']
-    b4 = ax.bar(x, agg['boiler'], bottom=bottom, label='Elec. Boiler', color=E_COLORS['boiler'], width=0.75, zorder=3)
-    bottom += agg['boiler']
-    b5 = ax.bar(x, agg['P_CHP_e'], bottom=bottom, label='CHP (Elec.)', color=E_COLORS['P_CHP_e'], width=0.75, zorder=3)
-    bottom += agg['P_CHP_e']
-    b6 = ax.bar(x, agg['market_buy'], bottom=bottom, label='Market Buy', color=E_COLORS['market_buy'], width=0.75,
-                zorder=3)
-    bottom += agg['market_buy']
-    b7 = ax.bar(x, agg['grid_buy'], bottom=bottom, label='Grid Buy', color=E_COLORS['grid_buy'], width=0.75, zorder=3)
-
-    ax.plot(x, agg['demand'], linestyle='--', linewidth=2.5, color=E_COLORS['demand'], label='Elec. Demand', zorder=4)
-
-    step = max(1, hours // 8)
-    ax.set_xticks(x[::step])
-    ax.set_xticklabels([f"{h:02d}:00" for h in x][::step])
-    ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
-    _apply_modern_style(ax)
-
-    ax.legend(ncol=8, loc='upper center', bbox_to_anchor=(0.5, -0.15), frameon=False)
+    fig, ax = plt.subplots(figsize=(14, 5), dpi=300)
+    _plot_electric_balance(ax, agg, demand_key='demand', panel_caption="", show_legend=True)
+    ax.set_title(title, fontweight='semibold', pad=12)
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
@@ -247,37 +389,11 @@ def plot_daily_stack_per_agent(per: Dict[str, Dict[str, np.ndarray]],
                                filename_prefix: str = "daily_agent_") -> List[str]:
     os.makedirs(save_dir, exist_ok=True)
     saved = []
-    for aid, dd in per.items():
-        hours = len(dd['G_demand'])
-        x = np.arange(hours)
-
-        fig, ax = plt.subplots(figsize=(14, 5))
-
-        ax.bar(x, dd['R_wind'], label='Wind Power', color=E_COLORS['R_wind'], width=0.75, zorder=3)
-        bottom = dd['R_wind'].copy()
-        ax.bar(x, dd['R_solar'], bottom=bottom, label='Solar Power', color=E_COLORS['R_solar'], width=0.75, zorder=3)
-        bottom += dd['R_solar']
-        ax.bar(x, dd['bat_dis'], bottom=bottom, label='Battery Disch.', color=E_COLORS['bat_dis'], width=0.75, zorder=3)
-        bottom += dd['bat_dis']
-        ax.bar(x, dd['boiler'], bottom=bottom, label='Elec. Boiler', color=E_COLORS['boiler'], width=0.75, zorder=3)
-        bottom += dd['boiler']
-        ax.bar(x, dd['P_CHP_e'], bottom=bottom, label='CHP (Elec.)', color=E_COLORS['P_CHP_e'], width=0.75, zorder=3)
-        bottom += dd['P_CHP_e']
-        ax.bar(x, dd['market_buy'], bottom=bottom, label='Market Buy', color=E_COLORS['market_buy'], width=0.75,
-               zorder=3)
-        bottom += dd['market_buy']
-        ax.bar(x, dd['grid_buy'], bottom=bottom, label='Grid Buy', color=E_COLORS['grid_buy'], width=0.75, zorder=3)
-
-        ax.plot(x, dd['G_demand'], linestyle='--', linewidth=2.5, color=E_COLORS['demand'], label='Elec. Demand',
-                zorder=4)
-
-        step = max(1, hours // 8)
-        ax.set_xticks(x[::step])
-        ax.set_xticklabels([f"{h:02d}:00" for h in x][::step])
-        ax.set_title(f"{aid}: Intraday Demand and Supply Stack (MW)", fontsize=14, fontweight='bold', pad=15)
-        _apply_modern_style(ax)
-
-        ax.legend(ncol=8, loc='upper center', bbox_to_anchor=(0.5, -0.15), frameon=False)
+    for idx, (aid, dd) in enumerate(per.items()):
+        fig, ax = plt.subplots(figsize=(14, 5), dpi=300)
+        area_name = _agent_profile_name(aid, idx)
+        panel_caption = f"({chr(97 + idx)}) {area_name} Electrical Power Balance"
+        _plot_electric_balance(ax, dd, demand_key='G_demand', panel_caption=panel_caption, show_legend=True)
         plt.tight_layout()
 
         out = os.path.join(save_dir, f"{filename_prefix}{aid}.png")
@@ -289,111 +405,77 @@ def plot_daily_stack_per_agent(per: Dict[str, Dict[str, np.ndarray]],
 
 def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
                                     save_path: str = "daily_agents_grid.png",
-                                    title: str = "Intraday Electricity Demand and Supply for Each Agent (MW)") -> str:
+                                    title: str = "Diurnal Electrical Power Balance by Agent (MW)") -> str:
     agent_ids = list(per.keys())
     n = len(agent_ids)
     import math
     cols = 2 if n > 1 else 1
     rows = math.ceil(n / cols)
 
-    fig, axes = plt.subplots(rows, cols, figsize=(14, 5 * rows), squeeze=False)
-    fig.suptitle(title, fontsize=16, fontweight='bold', y=0.98)
+    fig, axes = plt.subplots(rows, cols, figsize=(14, 5.6 * rows), squeeze=False, dpi=300)
+    fig.suptitle(title, fontsize=16, fontweight='semibold', y=0.985)
 
-    legend_labels = ['Wind Power', 'Solar Power', 'Battery Disch.', 'Elec. Boiler', 'CHP (Elec.)', 'Market Buy',
-                     'Grid Buy', 'Elec. Demand']
-    handles_sample = None
+    handles_sample, labels_sample = None, None
 
     for idx, aid in enumerate(agent_ids):
         r, c = divmod(idx, cols)
         ax = axes[r][c]
         dd = per[aid]
-        hours = len(dd['G_demand'])
-        x = np.arange(hours)
-
-        h1 = ax.bar(x, dd['R_wind'], color=E_COLORS['R_wind'], width=0.75, zorder=3)
-        bottom = dd['R_wind'].copy()
-        h2 = ax.bar(x, dd['R_solar'], bottom=bottom, color=E_COLORS['R_solar'], width=0.75, zorder=3)
-        bottom += dd['R_solar']
-        h3 = ax.bar(x, dd['bat_dis'], bottom=bottom, color=E_COLORS['bat_dis'], width=0.75, zorder=3)
-        bottom += dd['bat_dis']
-        h4 = ax.bar(x, dd['boiler'], bottom=bottom, color=E_COLORS['boiler'], width=0.75, zorder=3)
-        bottom += dd['boiler']
-        h5 = ax.bar(x, dd['P_CHP_e'], bottom=bottom, color=E_COLORS['P_CHP_e'], width=0.75, zorder=3)
-        bottom += dd['P_CHP_e']
-        h6 = ax.bar(x, dd['market_buy'], bottom=bottom, color=E_COLORS['market_buy'], width=0.75, zorder=3)
-        bottom += dd['market_buy']
-        h7 = ax.bar(x, dd['grid_buy'], bottom=bottom, color=E_COLORS['grid_buy'], width=0.75, zorder=3)
-
-        l8, = ax.plot(x, dd['G_demand'], linestyle='--', linewidth=2.5, color=E_COLORS['demand'], zorder=4)
-
+        area_name = _agent_profile_name(aid, idx)
+        panel_caption = f"({chr(97 + idx)}) {area_name} Electrical Power Balance"
+        handles, labels = _plot_electric_balance(ax, dd, demand_key='G_demand', panel_caption=panel_caption,
+                                                 show_legend=False)
         if handles_sample is None:
-            handles_sample = [h1, h2, h3, h4, h5, h6, h7, l8]
-
-        step = max(1, hours // 8)
-        ax.set_xticks(x[::step])
-        ax.set_xticklabels([f"{h:02d}:00" for h in x][::step])
-        ax.set_title(f"{aid}", fontsize=13, pad=10)
-        _apply_modern_style(ax)
+            handles_sample, labels_sample = handles, labels
 
     for k in range(n, rows * cols):
         r, c = divmod(k, cols)
         fig.delaxes(axes[r][c])
 
-    fig.subplots_adjust(bottom=0.12)
+    fig.subplots_adjust(left=0.07, right=0.99, top=0.84, bottom=0.08, hspace=0.30, wspace=0.20)
     if handles_sample is not None:
-        fig.legend(handles_sample, legend_labels, loc='lower center', ncol=8, frameon=False, bbox_to_anchor=(0.5, 0.02))
+        fig.legend(handles_sample, labels_sample, loc='upper center', ncol=4, frameon=False,
+                   bbox_to_anchor=(0.5, 0.935))
 
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.savefig(save_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
     return save_path
 
 
 def plot_daily_stack_per_agent_H_grid(per: Dict[str, Dict[str, np.ndarray]],
                                       save_path: str = "daily_agents_grid.png",
-                                      title: str = "Intraday Thermal Demand and Supply for Each Agent (MW)") -> str:
+                                      title: str = "Diurnal Thermal Power Balance by Agent (MW)") -> str:
     agent_ids = list(per.keys())
     n = len(agent_ids)
     import math
     cols = 2 if n > 1 else 1
     rows = math.ceil(n / cols)
 
-    fig, axes = plt.subplots(rows, cols, figsize=(14, 5 * rows), squeeze=False)
-    fig.suptitle(title, fontsize=16, fontweight='bold', y=0.98)
+    fig, axes = plt.subplots(rows, cols, figsize=(14, 5.6 * rows), squeeze=False, dpi=300)
+    fig.suptitle(title, fontsize=16, fontweight='semibold', y=0.985)
 
-    legend_labels = ['CHP (Therm.)', 'Heat Pump', 'Heat Grid Buy', 'Heat Demand']
-    handles_sample = None
+    handles_sample, labels_sample = None, None
 
     for idx, aid in enumerate(agent_ids):
         r, c = divmod(idx, cols)
         ax = axes[r][c]
         dd = per[aid]
-        hours = len(dd['H_demand'])
-        x = np.arange(hours)
-
-        h1 = ax.bar(x, dd['P_CHP_h'], color=H_COLORS['P_CHP_h'], width=0.75, zorder=3)
-        h2 = ax.bar(x, dd['P_HB_h'], bottom=dd['P_CHP_h'], color=H_COLORS['P_HB_h'], width=0.75, zorder=3)
-        h3 = ax.bar(x, dd['h_grid_buy'], bottom=dd['P_CHP_h'] + dd['P_HB_h'], color=H_COLORS['h_grid_buy'], width=0.75,
-                    zorder=3)
-        l6, = ax.plot(x, dd['H_demand'], linestyle='--', linewidth=2.5, color=H_COLORS['demand'], zorder=4)
-
+        area_name = _agent_profile_name(aid, idx)
+        panel_caption = f"({chr(97 + idx)}) {area_name} Thermal Power Balance"
+        handles, labels = _plot_thermal_balance(ax, dd, panel_caption=panel_caption, show_legend=False)
         if handles_sample is None:
-            handles_sample = [h1, h2, h3, l6]
-
-        step = max(1, hours // 8)
-        ax.set_xticks(x[::step])
-        ax.set_xticklabels([f"{h:02d}:00" for h in x][::step])
-        ax.set_title(f"{aid} - Thermal System", fontsize=13, pad=10)
-        _apply_modern_style(ax)
+            handles_sample, labels_sample = handles, labels
 
     for k in range(n, rows * cols):
         r, c = divmod(k, cols)
         fig.delaxes(axes[r][c])
 
-    fig.subplots_adjust(bottom=0.12)
+    fig.subplots_adjust(left=0.07, right=0.99, top=0.84, bottom=0.08, hspace=0.30, wspace=0.20)
     if handles_sample is not None:
-        fig.legend(handles_sample, legend_labels, loc='lower center', ncol=4, frameon=False, bbox_to_anchor=(0.5, 0.02))
+        fig.legend(handles_sample, labels_sample, loc='upper center', ncol=4, frameon=False,
+                   bbox_to_anchor=(0.5, 0.935))
 
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.savefig(save_path, dpi=1200, bbox_inches='tight')
     plt.close(fig)
     return save_path
 
@@ -464,17 +546,17 @@ def test_model_and_plot(algo: str = "iddpg",
 
     os.makedirs(savefile, exist_ok=True)
 
-    plot_daily_stack(agg, title=f"Test Set Day {plot_day_offset + 1}: Electricity Demand and Supply Stack (MW)",
+    plot_daily_stack(agg, title=f"Test Day {plot_day_offset + 1}: Diurnal Electrical Power Balance (MW)",
                      save_path=f"{savefile}/daily_supply_stack.png")
 
     per = rollout_one_day_per_agent(test_env, model, agents, day_start_idx=day_start, dt_hours=1.0)
     saved_files = plot_daily_stack_per_agent(per, save_dir=f"{savefile}", filename_prefix="daily_agent_")
 
     G_grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"{savefile}/daily_agents_Fed{Fed}.png",
-                                                  title=f"Test Set Day {plot_day_offset + 1}: Intraday Electricity Demand and Supply for Each Agent (MW)")
+                                                  title=f"Test Day {plot_day_offset + 1}: Diurnal Electrical Power Balance by Agent (MW)")
 
     H_grid_path = plot_daily_stack_per_agent_H_grid(per, save_path=f"{savefile}/H_daily_agents_Fed{Fed}.png",
-                                                    title=f"Test Set Day {plot_day_offset + 1}: Intraday Thermal Demand and Supply for Each Agent (MW)")
+                                                    title=f"Test Day {plot_day_offset + 1}: Diurnal Thermal Power Balance by Agent (MW)")
 
     print("Saved plot -> daily_supply_stack.png")
     print(f"Saved plot -> {G_grid_path}")
@@ -488,9 +570,9 @@ if __name__ == "__main__":
 
     parser.add_argument('--train_days', type=int, default=30 * 11,
                         help='Training days, default is 31*12')
-    parser.add_argument('--test_days', type=int, default=4,
+    parser.add_argument('--test_days', type=int, default=20,
                         help='Testing days, default is 4')
-    parser.add_argument('--plot_day_offset', type=int, default=1,
+    parser.add_argument('--plot_day_offset', type=int, default=50,
                         help='Plot day offset, default is 1')
 
     args = parser.parse_args()

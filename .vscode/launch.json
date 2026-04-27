@@ -3,22 +3,34 @@
     "configurations": [
         {
             "name": "Python: 运行main",
-            "type": "python",
+            "type": "debugpy",
             "request": "launch",
             "program": "main.py",
             "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "d:\\ITE\\.venv\\Scripts\\python.exe",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            },
             "args": [
-                "--run",
-                "FedAvg",
-                "--run",
-                "DSFA",
-                "--epochs",
-                "1000",
-                "--worker",
-                "2",
-                "--mode",
-                "parallel"
+                "--run", "FedAvg",
+                "--run", "DSFA",
+                "--epochs", "1000",
+                "--worker", "2",
+                "--mode", "parallel"
             ]
+        },
+        {
+            "name": "Python: 运行测试文件",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "./flcore/utils/test_model_ENG.py",
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "python": "d:\\ITE\\.venv\\Scripts\\python.exe",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}"
+            }
         }
     ]
 }
