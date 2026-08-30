@@ -5,8 +5,10 @@ import torch.optim as optim
 import random
 import numpy as np
 from collections import deque  # 导入双端队列，用于实现经验回放池
+from pathlib import Path
+
 #导入模型
-from flcore.Model import Actor,Critic
+from flcore.Model import Actor, Critic
 
 # 定义经验回放池
 class ReplayBuffer:
@@ -26,20 +28,32 @@ class ReplayBuffer:
         return len(self.buffer)  # 返回经验池中当前存储的样本数量
 
 class DDPGAgent:
-    def __init__(self, state_dim, action_dim, max_action=1.0, gamma=0.99, tau=0.005,
-                 buffer_size=100000, batch_size=500, device=None):
+    def __init__(
+        self,
+        state_dim: int,
+        action_dim: int,
+        max_action: float = 1.0,
+        gamma: float = 0.99,
+        tau: float = 0.005,
+        buffer_size: int = 100000,
+        batch_size: int = 500,
+        lr_actor: float = 1e-4,
+        lr_critic: float = 1e-3,
+        device: str | None = None,
+    ):
+        """初始化单智能体 DDPG，用于处理完整状态和联合动作。"""
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.actor = Actor(state_dim, action_dim, max_action=1.0).to(self.device)
-        self.actor_target = Actor(state_dim, action_dim, max_action=1.0).to(self.device)
+        self.actor = Actor(state_dim, action_dim, max_action=max_action).to(self.device)
+        self.actor_target = Actor(state_dim, action_dim, max_action=max_action).to(self.device)
         self.actor_target.load_state_dict(self.actor.state_dict())
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=1e-4)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr_actor)
 
         self.critic = Critic(state_dim, action_dim).to(self.device)
         self.critic_target = Critic(state_dim, action_dim).to(self.device)
         self.critic_target.load_state_dict(self.critic.state_dict())
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=1e-3)
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr_critic)
 
-        self.max_action = 1.0           # RescaleAction 已把环境动作缩放到 [-1,1]
+        self.max_action = float(max_action)
         self.expl_noise_std = 0.1
         self.gamma = gamma
         self.tau = tau
@@ -47,12 +61,23 @@ class DDPGAgent:
         self.batch_size = batch_size
 
     @torch.no_grad()
-    def select_action(self, state, explore=True):
+    def select_action(
+        self,
+        state: np.ndarray,
+        explore: bool = True,
+        noise_scale: float | None = None,
+    ) -> np.ndarray:
+        """
+        根据完整状态生成联合动作。
+
+        ``noise_scale`` 未指定时使用默认探索噪声；为 0 时输出确定性动作。
+        """
         state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)  # (1, S)
-        a = self.actor(state_t)          # 假设 Actor 输出未做 tanh
-        a = torch.tanh(a).cpu().numpy().flatten()  # 压到 [-1,1]
+        # Actor 的输出层已经包含 Tanh，此处不能再次压缩，否则动作范围会退化到约 [-0.76, 0.76]。
+        a = self.actor(state_t).cpu().numpy().flatten()
         if explore:
-            a = a + np.random.normal(0, self.expl_noise_std, size=a.shape)
+            actual_noise_scale = self.expl_noise_std if noise_scale is None else float(noise_scale)
+            a = a + np.random.normal(0, actual_noise_scale, size=a.shape)
         return np.clip(a, -self.max_action, self.max_action).astype(np.float32)
 
     def train(self):
@@ -68,7 +93,7 @@ class DDPGAgent:
         dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device).unsqueeze(1)      # (B,1)
 
         with torch.no_grad():
-            next_actions = torch.tanh(self.actor_target(next_states))  # 目标动作也限幅到 [-1,1]
+            next_actions = self.actor_target(next_states)
             target_q = self.critic_target(next_states, next_actions)
             target_q = rewards + (1.0 - dones) * self.gamma * target_q
 
@@ -80,7 +105,7 @@ class DDPGAgent:
         torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 1.0)  # 可选：稳定训练
         self.critic_optimizer.step()
 
-        actor_loss = -self.critic(states, torch.tanh(self.actor(states))).mean()
+        actor_loss = -self.critic(states, self.actor(states)).mean()
 
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
@@ -103,3 +128,21 @@ class DDPGAgent:
         done = float(done)
         self.replay_buffer.add(state, action, reward, next_state, done)
 
+    def save(self, directory: str = "./model_pth/ddpg") -> None:
+        """保存整体 Actor 和 Critic 参数。"""
+        save_dir = Path(directory)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        torch.save(self.actor.state_dict(), save_dir / "actor.pth")
+        torch.save(self.critic.state_dict(), save_dir / "critic.pth")
+
+    def load(self, directory: str = "./model_pth/ddpg") -> None:
+        """加载整体 Actor 和 Critic 参数，并同步目标网络。"""
+        save_dir = Path(directory)
+        self.actor.load_state_dict(
+            torch.load(save_dir / "actor.pth", map_location=self.device, weights_only=True)
+        )
+        self.critic.load_state_dict(
+            torch.load(save_dir / "critic.pth", map_location=self.device, weights_only=True)
+        )
+        self.actor_target.load_state_dict(self.actor.state_dict())
+        self.critic_target.load_state_dict(self.critic.state_dict())

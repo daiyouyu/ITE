@@ -71,13 +71,13 @@ def view_HGR_data():
         ax.set_title('')
 
         # Y轴标签
-        ax.set_ylabel('Power (MW)', fontsize=12)
+        ax.set_ylabel('Power (MW)', fontsize=18)
 
         # X轴标签与子图标题合并，放在图表下方（减小换行间距，从而减小上下留白）
-        ax.set_xlabel(f'Hour (h)\n{agent_names[group]}', fontsize=12, labelpad=6)
+        ax.set_xlabel(f'Hour (h)\n{agent_names[group]}', fontsize=18, labelpad=6)
 
         # 设置X轴刻度：每 2 小时一个刻度 (1:00, 3:00 ... 23:00)
-        ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(1, 24, 2)))
+        ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(1, 24, 3)))
 
         # 自定义格式化函数：去除小时前面的 0 (如 01:00 变成 1:00，还原参考图样式)
         def format_hour(x, pos):
@@ -88,8 +88,8 @@ def view_HGR_data():
 
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_hour))
 
-        ax.tick_params(axis='x', rotation=0, labelsize=11)
-        ax.tick_params(axis='y', labelsize=11)
+        ax.tick_params(axis='x', rotation=0, labelsize=18)
+        ax.tick_params(axis='y', labelsize=18)
         ax.set_ylim(bottom=0)
 
         # 网格线：全区域虚线网格，仿照参考图
@@ -102,7 +102,7 @@ def view_HGR_data():
             spine.set_linewidth(1.0)
 
         # 图例：带边框，双列排布，放置在左上角
-        ax.legend(loc='upper left', ncol=2, fontsize=10, frameon=True, edgecolor='#cccccc')
+        ax.legend(loc='upper left', ncol=2, fontsize=14, frameon=True, edgecolor='#cccccc')
 
     # 减小 hspace 以紧凑排版
     plt.tight_layout()
@@ -209,13 +209,13 @@ def view_R_data():
         ax.set_title('')
 
         # Y轴标签
-        ax.set_ylabel('Power (MW)', fontsize=12)
+        ax.set_ylabel('Power (MW)', fontsize=18)
 
         # X轴标签与子图标题合并，放在图表下方（减小换行间距，从而减小上下留白）
-        ax.set_xlabel(f'Hour (h)\n{agent_names[group]}', fontsize=12, labelpad=6)
+        ax.set_xlabel(f'Hour (h)\n{agent_names[group]}', fontsize=18, labelpad=6)
 
         # 优化坐标轴刻度，使其更易阅读：每 2 小时一个刻度 (1:00, 3:00 ... 23:00)
-        ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(1, 24, 2)))
+        ax.xaxis.set_major_locator(mdates.HourLocator(byhour=range(1, 24, 3)))
 
         def format_hour(x, pos):
             dt_obj = mdates.num2date(x)
@@ -225,8 +225,8 @@ def view_R_data():
 
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(format_hour))
 
-        ax.tick_params(axis='x', rotation=0, labelsize=11)
-        ax.tick_params(axis='y', labelsize=11)
+        ax.tick_params(axis='x', rotation=0, labelsize=18)
+        ax.tick_params(axis='y', labelsize=18)
 
         # 统一y轴范围
         ax.set_ylim(0, 16)
@@ -241,16 +241,16 @@ def view_R_data():
             spine.set_linewidth(1.0)
 
         # 图例：带边框，双列排布，放置在左上角
-        ax.legend(loc='upper left', ncol=2, fontsize=10, frameon=True, edgecolor='#cccccc')
+        ax.legend(loc='upper left', ncol=1, fontsize=18, frameon=True, edgecolor='#cccccc')
 
     plt.tight_layout()
     plt.subplots_adjust(hspace=0.2)
-    plt.savefig('./figure/ITE_R_data_ENG.png', dpi=1200, bbox_inches='tight')
+    plt.savefig('./figure/ITE_R_data_ENG.png', dpi=900, bbox_inches='tight')
     print("Saved plot -> ./figure/ITE_R_data_ENG.png")
     # plt.show()
 
 
 if __name__ == '__main__':
-    # view_HGR_data()
+    view_HGR_data()
     # view_P_data()
-    view_R_data()
+    # view_R_data()

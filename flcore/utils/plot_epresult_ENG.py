@@ -6,15 +6,27 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 
 # ==== Change to English academic font ====
 import matplotlib as mpl
+from matplotlib.ticker import FuncFormatter
 
 mpl.rcParams["font.family"] = "sans-serif"
 plt.rcParams['axes.unicode_minus'] = False
 
 
+def scientific_star_formatter(value, _pos):
+    if value == 0:
+        return "0"
+
+    exponent = int(np.floor(np.log10(abs(value))))
+    coefficient = value / (10 ** exponent)
+    
+    # 美观格式：1.23 × 10⁵（上标）
+    return rf"{coefficient:.2f}$\times 10^{{{exponent}}}$"
+
+
 # ==== Improved drawing function ====
 def draw_result(rewards_record):
     # Create canvas, slightly larger to accommodate details
-    fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=600)
 
     # Define different line styles and colors to prevent confusion when colors are similar
     line_styles = ['-', '--', '-.', ':']
@@ -27,13 +39,15 @@ def draw_result(rewards_record):
         color = colors[i % len(colors)]
         ax.plot(reward, label=str(idx), linestyle=style, color=color, linewidth=1.5, alpha=0.9)
 
-    ax.set_title("Convergence of Different Algorithms", fontsize=14, fontweight='bold')
-    ax.set_xlabel("Episode", fontsize=12)
-    ax.set_ylabel("Average Daily Cost", fontsize=12)
+    ax.set_title("Convergence of Different Algorithms", fontsize=16, fontweight='bold')
+    ax.set_xlabel("Episode", fontsize=16)
+    ax.set_ylabel("Average Daily Cost", fontsize=16)
+    ax.yaxis.set_major_formatter(FuncFormatter(scientific_star_formatter))
+    ax.tick_params(axis='both', labelsize=14)
     ax.grid(True, linestyle='--', alpha=0.4)  # Add grid to make reading values easier
 
     # Set legend position, 'best' automatically avoids data, or specify manually
-    ax.legend(loc='lower right', frameon=True, shadow=True, fontsize=11)
+    ax.legend(loc='lower right', frameon=True, shadow=True, fontsize=14)
 
     # ==== 2. Add local zoomed-in plot (Critical improvement) ====
     # Create a subplot inside the main plot (width 40%, height 30%, positioned at 'center right')
@@ -66,7 +80,8 @@ def draw_result(rewards_record):
 
     # Add grid to subplot
     axins.grid(True, linestyle=':', alpha=0.5)
-    axins.tick_params(labelsize=9)
+    axins.tick_params(axis='both', labelsize=11)
+    axins.yaxis.set_major_formatter(FuncFormatter(scientific_star_formatter))
 
     # 3. Create connection lines (connect main plot and zoomed-in plot)
     # loc1, loc2 are corner numbers (1=upper right, 2=upper left, 3=lower left, 4=lower right)
@@ -80,8 +95,8 @@ def draw_result(rewards_record):
 
     plt.tight_layout()
     # Ensure saving to the current directory or wherever specified
-    save_path = '../../data/figure/plot_epresult_ENG.png'
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    save_path = './data/figure/plot_epresult_ENG.png'
+    plt.savefig(save_path, dpi=600, bbox_inches='tight')
     print(f"Saved plot -> {save_path}")
     plt.show()
 
@@ -93,8 +108,8 @@ if __name__ == '__main__':
         # 处理数据
         keys = ["maddpg", "DSFA", "iddpg", 'FedAvg']
         rew_data = {
-            'FedAvg': rew1['FedAvg'],
             'DSFA': rew1['DSFA'],
+            'FedAvg': rew1['FedAvg'],
             'iddpg': rew['iddpg'],
             'maddpg': rew['maddpg']
         }

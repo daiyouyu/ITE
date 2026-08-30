@@ -3,7 +3,10 @@ from functools import partial
 
 def train_worker(algo_name, episodes, train_days, federated,fed_method):
     """单个训练进程"""
-    if algo_name == 'iddpg':
+    if algo_name == 'ddpg':
+        from flcore.train.train_ddpg import train_ddpg
+        return train_ddpg(episodes, train_days, 0)
+    elif algo_name == 'iddpg':
         from flcore.train.train_iddpg import train_iddpg
         return train_iddpg(episodes, train_days, 0, federated,fed_method)
     else:

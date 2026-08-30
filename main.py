@@ -13,6 +13,7 @@ def main(args):
     # 将用户友好的名称映射到 train_worker 所需的参数元组
     # 格式: (algo_name, episodes, train_days, federated, fed_method)
     task_map = {
+        'DDPG': ('ddpg', args.epochs, args.train_days, False, None),
         'DSFA': ('iddpg', args.epochs, args.train_days, True, 'DSFA'),
         'FedAvg': ('iddpg', args.epochs, args.train_days, True, 'FedAvg'),
         'IDDPG_solo': ('iddpg', args.epochs, args.train_days, False, 'DSFA'), # fed_method 在此为占位符
@@ -62,13 +63,16 @@ def main(args):
         print("使用串行训练模式...")
         from flcore.train.train_iddpg import train_iddpg
         from flcore.train.train_maddpg import train_maddpg
+        from flcore.train.train_ddpg import train_ddpg
 
         for i, run_name in enumerate(valid_run_names):
             print(f"\n{'='*10} 开始运行任务: {run_name} {'='*10}")
             
             algo_name, episodes, train_days, federated, fed_method = tasks_to_run[i]
 
-            if algo_name == 'iddpg':
+            if algo_name == 'ddpg':
+                rewards, _ = train_ddpg(episodes, train_days, 0)
+            elif algo_name == 'iddpg':
                 rewards, _ = train_iddpg(episodes, train_days, 0, federated, fed_method)
             else: # maddpg
                 rewards, _ = train_maddpg(episodes, train_days, 0, federated)
@@ -103,7 +107,7 @@ if __name__ == "__main__":
         '-r', '--run',
         type=str,
         action='append', # 允许多次使用此参数
-        help=f"指定要运行的训练任务。可用选项: {', '.join(['DSFA', 'FedAvg', 'IDDPG_solo', 'MADDPG_solo', 'Fed_MADDPG'])}。可多次指定，例如: --run DSFA --run FedAvg"
+        help=f"指定要运行的训练任务。可用选项: {', '.join(['DDPG', 'DSFA', 'FedAvg', 'IDDPG_solo', 'MADDPG_solo', 'Fed_MADDPG'])}。可多次指定，例如: --run DDPG --run DSFA"
     )
     parser.add_argument(
         '-e', '--epochs',

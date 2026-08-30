@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 import os
 from matplotlib import font_manager
 from datetime import datetime as dt
+import random
 
 # ==== Font Configuration ====
 # Kept for compatibility, though we are using English now.
@@ -491,7 +492,9 @@ def test_model_and_plot(algo: str = "iddpg",
                         gamma: float = 0.99,
                         tau: float = 0.01,
                         batch_size: int = 256,
-                        buffer_size: int = 200_000) -> Tuple[List[np.ndarray], List[np.ndarray], Dict[str, float]]:
+                        buffer_size: int = 200_000,
+                        enable_env_mutation: bool = False) -> Tuple[
+    List[np.ndarray], List[np.ndarray], Dict[str, float]]:
     presets = default_presets()
     train_series, test_series, T, train_idx, test_idx = load_series_split(
         path1="./data/IES_data/G_demand.csv",
@@ -499,6 +502,20 @@ def test_model_and_plot(algo: str = "iddpg",
         train_days=train,
         test_days=test
     )
+
+    if enable_env_mutation:
+        print(
+            "\n[INFO] 环境突变已激活：将智能体环境进行循环平移 (agent 1 使用 agent 2 的数据, agent 2 使用 agent 3 的数据, ...)")
+        agent_ids = len(test_series)
+        env_data_list = [test_series[aid] for aid in range(agent_ids)]
+
+        # 执行循环平移：agent_i 的环境数据变为 agent_{i+1} 的数据
+        if len(env_data_list) > 1:
+            env_data_list = env_data_list[1:] + env_data_list[:1]
+
+        test_series = {agent_id: data for agent_id, data in zip(range(agent_ids), env_data_list)}
+        print("[INFO] 测试环境已平移。")
+
     env, test_env = build_envs(train_series, test_series, presets.env_kwargs)
     obs_dims, action_dims, max_actions, agents = infer_dims(env)
 
@@ -572,8 +589,13 @@ if __name__ == "__main__":
                         help='Training days, default is 31*12')
     parser.add_argument('--test_days', type=int, default=20,
                         help='Testing days, default is 4')
-    parser.add_argument('--plot_day_offset', type=int, default=50,
+    parser.add_argument('--plot_day_offset', type=int, default=1,
                         help='Plot day offset, default is 1')
+    parser.add_argument(
+        '--enable_env_mutation',
+        action='store_true',
+        help='Enable environment mutation (swapping) to test model generalization.'
+    )
 
     args = parser.parse_args()
 
@@ -593,7 +615,8 @@ if __name__ == "__main__":
             Fed=params['Fed'],
             train=args.train_days,
             test=args.test_days,
-            plot_day_offset=args.plot_day_offset
+            plot_day_offset=args.plot_day_offset,
+            enable_env_mutation=args.enable_env_mutation
         )
 
         total_reward = sum(re)
