@@ -2,7 +2,8 @@
 
 .venv
 结果
-*.pth
+data/figure/*.png
+result/
 
 # ------------python默认不提交--------------------
 # Byte-compiled / optimized / DLL files
