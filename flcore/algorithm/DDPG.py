@@ -88,7 +88,13 @@ class DDPGAgent:
         # 统一 dtype & device
         states = torch.as_tensor(states, dtype=torch.float32, device=self.device)
         actions = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
-        rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device).unsqueeze(1)  # (B,1)
+        rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device)
+        # 回放池保留各个环境的独立 reward；单 Critic 更新时再聚合为系统 reward，
+        # 避免在写入经验时丢失每个环境各自的奖励信息。
+        if rewards.ndim == 1:
+            rewards = rewards.unsqueeze(1)
+        else:
+            rewards = rewards.reshape(rewards.shape[0], -1).sum(dim=1, keepdim=True)
         next_states = torch.as_tensor(next_states, dtype=torch.float32, device=self.device)
         dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device).unsqueeze(1)      # (B,1)
 
@@ -120,11 +126,13 @@ class DDPGAgent:
                 tp.data.mul_(1 - self.tau).add_(self.tau * p.data)
 
     def add_to_replay_buffer(self, state, action, reward, next_state, done):
-        # 确保一维向量/标量，全是 numpy 基本类型，避免后面 stack 出现 object 数组
+        """将联合 transition 写入回放池，并分别保留各环境的 reward。"""
         state = np.asarray(state, dtype=np.float32).reshape(-1)
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         next_state = np.asarray(next_state, dtype=np.float32).reshape(-1)
-        reward = float(reward)
+        reward = np.asarray(reward, dtype=np.float32).reshape(-1)
+        if reward.size == 0:
+            raise ValueError("reward 不能为空")
         done = float(done)
         self.replay_buffer.add(state, action, reward, next_state, done)
 

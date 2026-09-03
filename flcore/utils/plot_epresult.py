@@ -86,6 +86,7 @@ def draw_result(rewards_record):
     mark_inset(ax, axins, loc1=2, loc2=4, fc="none", ec="0.5", linestyle="--")
 
     plt.tight_layout()
+    plt.savefig("result_plot.png", dpi=600)  # 保存高分辨率图像
     plt.show()
 
 

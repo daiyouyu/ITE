@@ -220,13 +220,12 @@ def train_ddpg(
                     bool(term_dict[a]) or bool(trunc_dict[a])
                     for a in agents
                 ]
-                system_reward = float(reward_list.sum())
                 system_done = all(done_list)
 
                 agent.add_to_replay_buffer(
                     state,
                     joint_action,
-                    system_reward,
+                    reward_list,
                     next_state,
                     system_done,
                 )

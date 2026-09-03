@@ -2,7 +2,7 @@
 
 .venv
 结果
-data/figure/*.png
+data/figure
 result/
 
 # ------------python默认不提交--------------------
