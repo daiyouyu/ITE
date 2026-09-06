@@ -8,7 +8,7 @@ from collections import deque  # 导入双端队列，用于实现经验回放�
 from pathlib import Path
 
 #导入模型
-from flcore.Model import Actor, Critic
+from flcore.Model import Critic, StructuredCentralizedActor
 
 # 定义经验回放池
 class ReplayBuffer:
@@ -40,11 +40,38 @@ class DDPGAgent:
         lr_actor: float = 1e-4,
         lr_critic: float = 1e-3,
         device: str | None = None,
+        obs_dims: list[int] | None = None,
+        action_dims: list[int] | None = None,
     ):
-        """初始化单智能体 DDPG，用于处理完整状态和联合动作。"""
+        """
+        初始化采用结构化集中 Actor 的单智能体 DDPG。
+
+        ``obs_dims`` 和 ``action_dims`` 描述各园区在联合向量中的切分方式。
+        未提供时退化为单分支结构，以兼容原有的直接实例化调用。
+        """
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        self.actor = Actor(state_dim, action_dim, max_action=max_action).to(self.device)
-        self.actor_target = Actor(state_dim, action_dim, max_action=max_action).to(self.device)
+        resolved_obs_dims = [state_dim] if obs_dims is None else list(obs_dims)
+        resolved_action_dims = [action_dim] if action_dims is None else list(action_dims)
+        if sum(resolved_obs_dims) != state_dim:
+            raise ValueError(
+                f"obs_dims 总和与 state_dim 不一致: {sum(resolved_obs_dims)} != {state_dim}"
+            )
+        if sum(resolved_action_dims) != action_dim:
+            raise ValueError(
+                "action_dims 总和与 action_dim 不一致: "
+                f"{sum(resolved_action_dims)} != {action_dim}"
+            )
+
+        self.actor = StructuredCentralizedActor(
+            resolved_obs_dims,
+            resolved_action_dims,
+            max_action=max_action,
+        ).to(self.device)
+        self.actor_target = StructuredCentralizedActor(
+            resolved_obs_dims,
+            resolved_action_dims,
+            max_action=max_action,
+        ).to(self.device)
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr_actor)
 

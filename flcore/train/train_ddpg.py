@@ -165,6 +165,8 @@ def train_ddpg(
         buffer_size=presets.algo_kwargs["buffer_size"],
         lr_actor=presets.algo_kwargs["lr_actor"],
         lr_critic=presets.algo_kwargs["lr_critic"],
+        obs_dims=obs_dims,
+        action_dims=action_dims,
     )
 
     rewards: list[np.ndarray] = []
@@ -175,7 +177,8 @@ def train_ddpg(
 
     print(
         "DDPG 整体训练初始化完成: "
-        f"agents={len(agents)}, state_dim={state_dim}, action_dim={action_dim}"
+        f"agents={len(agents)}, state_dim={state_dim}, action_dim={action_dim}, "
+        "actor=局部编码器+全局融合+独立动作头"
     )
 
     try:
