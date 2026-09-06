@@ -14,9 +14,9 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_PRIMARY_RESULT = PROJECT_ROOT / "result" / "20260903" / "result_arrays.npz"
+DEFAULT_PRIMARY_RESULT = PROJECT_ROOT / "result" / "20260905" / "result_arrays.npz"
 DEFAULT_BASELINE_RESULT = PROJECT_ROOT / "result" / "20260329" / "result_arrays.npz"
-DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "result" / "figure" / "plot_epresult_for_four.png"
+DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "result" / "figure" /"20260905" / "plot_epresult_for_four.png"
 PARK_COUNT = 4
 
 ALGORITHM_STYLES = {
