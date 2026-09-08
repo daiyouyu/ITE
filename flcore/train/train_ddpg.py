@@ -127,7 +127,8 @@ def train_ddpg(
     使用一个 DDPG 智能体对 ``MultiBatteryCoordinator`` 中的所有单体进行整体训练。
 
     每一步会按固定顺序拼接所有单体观测，由同一个 Actor 一次性生成联合动作；
-    Critic 使用所有单体奖励之和作为系统奖励，从而直接优化整体运行成本。
+    每个园区的独立 Critic 读取联合观测与动作，学习自身奖励对应的长期回报；
+    Actor 汇总全部 Critic 的评价统一更新，所有网络均位于训练中心侧。
 
     Args:
         episodes: 训练回合数。
@@ -178,6 +179,7 @@ def train_ddpg(
     print(
         "DDPG 整体训练初始化完成: "
         f"agents={len(agents)}, state_dim={state_dim}, action_dim={action_dim}, "
+        f"critics={agent.n_agents}（全局输入、园区独立奖励）, "
         "actor=局部编码器+全局融合+独立动作头"
     )
 

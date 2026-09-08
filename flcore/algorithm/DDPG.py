@@ -75,10 +75,17 @@ class DDPGAgent:
         self.actor_target.load_state_dict(self.actor.state_dict())
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr_actor)
 
-        self.critic = Critic(state_dim, action_dim).to(self.device)
-        self.critic_target = Critic(state_dim, action_dim).to(self.device)
-        self.critic_target.load_state_dict(self.critic.state_dict())
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr_critic)
+        self.n_agents = len(resolved_obs_dims)
+        self.critics = nn.ModuleList(
+            Critic(state_dim, action_dim) for _ in range(self.n_agents)
+        ).to(self.device)
+        self.critic_targets = nn.ModuleList(
+            Critic(state_dim, action_dim) for _ in range(self.n_agents)
+        ).to(self.device)
+        self.critic_targets.load_state_dict(self.critics.state_dict())
+        self.critic_optimizers = [
+            optim.Adam(critic.parameters(), lr=lr_critic) for critic in self.critics
+        ]
 
         self.max_action = float(max_action)
         self.expl_noise_std = 0.1
@@ -107,7 +114,8 @@ class DDPGAgent:
             a = a + np.random.normal(0, actual_noise_scale, size=a.shape)
         return np.clip(a, -self.max_action, self.max_action).astype(np.float32)
 
-    def train(self):
+    def train(self) -> None:
+        """独立拟合各园区回报，再汇总全局条件评价更新中心 Actor；样本不足时跳过。"""
         if self.replay_buffer.size() < self.batch_size:
             return
 
@@ -116,38 +124,45 @@ class DDPGAgent:
         states = torch.as_tensor(states, dtype=torch.float32, device=self.device)
         actions = torch.as_tensor(actions, dtype=torch.float32, device=self.device)
         rewards = torch.as_tensor(rewards, dtype=torch.float32, device=self.device)
-        # 回放池保留各个环境的独立 reward；单 Critic 更新时再聚合为系统 reward，
-        # 避免在写入经验时丢失每个环境各自的奖励信息。
-        if rewards.ndim == 1:
-            rewards = rewards.unsqueeze(1)
-        else:
-            rewards = rewards.reshape(rewards.shape[0], -1).sum(dim=1, keepdim=True)
+        rewards = rewards.reshape(self.batch_size, self.n_agents)
         next_states = torch.as_tensor(next_states, dtype=torch.float32, device=self.device)
         dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device).unsqueeze(1)      # (B,1)
 
         with torch.no_grad():
             next_actions = self.actor_target(next_states)
-            target_q = self.critic_target(next_states, next_actions)
-            target_q = rewards + (1.0 - dones) * self.gamma * target_q
+            target_values = [
+                rewards[:, i:i + 1] + (1.0 - dones) * self.gamma
+                * target(next_states, next_actions)
+                for i, target in enumerate(self.critic_targets)
+            ]
 
-        current_q = self.critic(states, actions)
-        critic_loss = nn.MSELoss()(current_q, target_q)
+        for critic, optimizer, target_q in zip(
+            self.critics, self.critic_optimizers, target_values
+        ):
+            critic_loss = nn.MSELoss()(critic(states, actions), target_q)
+            optimizer.zero_grad(set_to_none=True)
+            critic_loss.backward()
+            torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
+            optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
 
-        self.critic_optimizer.zero_grad()
-        critic_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.critic.parameters(), 1.0)  # 可选：稳定训练
-        self.critic_optimizer.step()
-
-        actor_loss = -self.critic(states, self.actor(states)).mean()
-
-        self.actor_optimizer.zero_grad()
-        actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 1.0)   # 可选
-        self.actor_optimizer.step()
+        # 仅冻结评价器参数，保留各 Q 对完整联合动作的梯度，学习跨园区影响。
+        self.critics.requires_grad_(False)
+        try:
+            joint_actions = self.actor(states)
+            actor_loss = -torch.cat([
+                critic(states, joint_actions) for critic in self.critics
+            ], dim=1).sum(dim=1).mean()
+            self.actor_optimizer.zero_grad(set_to_none=True)
+            actor_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 1.0)
+            self.actor_optimizer.step()
+        finally:
+            self.critics.requires_grad_(True)
 
         # 软更新
         with torch.no_grad():
-            for tp, p in zip(self.critic_target.parameters(), self.critic.parameters()):
+            for tp, p in zip(self.critic_targets.parameters(), self.critics.parameters()):
                 tp.data.mul_(1 - self.tau).add_(self.tau * p.data)
             for tp, p in zip(self.actor_target.parameters(), self.actor.parameters()):
                 tp.data.mul_(1 - self.tau).add_(self.tau * p.data)
@@ -158,26 +173,30 @@ class DDPGAgent:
         action = np.asarray(action, dtype=np.float32).reshape(-1)
         next_state = np.asarray(next_state, dtype=np.float32).reshape(-1)
         reward = np.asarray(reward, dtype=np.float32).reshape(-1)
-        if reward.size == 0:
-            raise ValueError("reward 不能为空")
+        if reward.size != self.n_agents:
+            raise ValueError(
+                f"reward 必须按园区顺序提供: expected={self.n_agents}, actual={reward.size}"
+            )
         done = float(done)
         self.replay_buffer.add(state, action, reward, next_state, done)
 
     def save(self, directory: str = "./model_pth/ddpg") -> None:
-        """保存整体 Actor 和 Critic 参数。"""
+        """保存中心 Actor 和全部独立 Critic 参数。"""
         save_dir = Path(directory)
         save_dir.mkdir(parents=True, exist_ok=True)
         torch.save(self.actor.state_dict(), save_dir / "actor.pth")
-        torch.save(self.critic.state_dict(), save_dir / "critic.pth")
+        torch.save(self.critics.state_dict(), save_dir / "critics.pth")
 
     def load(self, directory: str = "./model_pth/ddpg") -> None:
-        """加载整体 Actor 和 Critic 参数，并同步目标网络。"""
+        """加载相同园区配置的多 Critic 模型并同步目标网络；旧单 Critic 不可恢复。"""
         save_dir = Path(directory)
+        if not (save_dir / "critics.pth").is_file():
+            raise FileNotFoundError("缺少 critics.pth，旧单 Critic 检查点不能用于恢复多 Critic 训练")
         self.actor.load_state_dict(
             torch.load(save_dir / "actor.pth", map_location=self.device, weights_only=True)
         )
-        self.critic.load_state_dict(
-            torch.load(save_dir / "critic.pth", map_location=self.device, weights_only=True)
+        self.critics.load_state_dict(
+            torch.load(save_dir / "critics.pth", map_location=self.device, weights_only=True)
         )
         self.actor_target.load_state_dict(self.actor.state_dict())
-        self.critic_target.load_state_dict(self.critic.state_dict())
+        self.critic_targets.load_state_dict(self.critics.state_dict())
