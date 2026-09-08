@@ -11,6 +11,9 @@ result/
 __pycache__/
 *.py[codz]
 *$py.class
+__pycache__/
+*.py[cod]
+*$py.class
 
 # C extensions
 *.so
