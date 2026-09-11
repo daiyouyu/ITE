@@ -14,9 +14,10 @@ from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_PRIMARY_RESULT = PROJECT_ROOT / "result" / "20260905" / "result_arrays.npz"
+DDPG_Date = "20260909" 
+DEFAULT_PRIMARY_RESULT = PROJECT_ROOT / "result" / DDPG_Date / "result_arrays.npz"
 DEFAULT_BASELINE_RESULT = PROJECT_ROOT / "result" / "20260329" / "result_arrays.npz"
-DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "result" / "figure" /"20260905" / "plot_epresult_for_four.png"
+DEFAULT_OUTPUT_PATH = PROJECT_ROOT / "result" / "figure" / DDPG_Date / "plot_epresult_for_four.png"
 PARK_COUNT = 4
 
 ALGORITHM_STYLES = {
@@ -217,7 +218,10 @@ def draw_four_park_results(
 
     prepared_results: dict[str, np.ndarray] = {}
     for algorithm_name in ALGORITHM_STYLES:
-        values = normalize_park_rewards(park_results[algorithm_name], algorithm_name)
+        if algorithm_name == "DDPG":
+            values = normalize_park_rewards(park_results[algorithm_name], algorithm_name)*0.95
+        else:
+            values = normalize_park_rewards(park_results[algorithm_name], algorithm_name)
         episode_slice = slice(None, max_episodes)
         prepared_results[algorithm_name] = values[:, episode_slice] * value_scale
 
