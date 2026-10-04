@@ -15,6 +15,7 @@ def main(args):
     task_map = {
         'DDPG': ('ddpg', args.epochs, args.train_days, False, None),
         'DSFA': ('iddpg', args.epochs, args.train_days, True, 'DSFA'),
+        'AllDSFA': ('iddpg', args.epochs, args.train_days, True, 'AllDSFA'),
         'FedAvg': ('iddpg', args.epochs, args.train_days, True, 'FedAvg'),
         'IDDPG_solo': ('iddpg', args.epochs, args.train_days, False, 'DSFA'), # fed_method 在此为占位符
         'MADDPG_solo': ('maddpg', args.epochs, args.train_days, False, None),
@@ -107,7 +108,7 @@ if __name__ == "__main__":
         '-r', '--run',
         type=str,
         action='append', # 允许多次使用此参数
-        help=f"指定要运行的训练任务。可用选项: {', '.join(['DDPG', 'DSFA', 'FedAvg', 'IDDPG_solo', 'MADDPG_solo', 'Fed_MADDPG'])}。可多次指定，例如: --run DDPG --run DSFA"
+        help=f"指定要运行的训练任务。可用选项: {', '.join(['DDPG', 'DSFA', 'AllDSFA', 'FedAvg', 'IDDPG_solo', 'MADDPG_solo', 'Fed_MADDPG'])}。可多次指定，例如: --run DDPG --run DSFA"
     )
     parser.add_argument(
         '-e', '--epochs',
