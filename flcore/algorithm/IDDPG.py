@@ -178,11 +178,12 @@ class IDDPG:
 
     def Fed_Aggergate(self, method='DSFA'):
         """
-        联邦聚合方法：支持 'DSFA' (自适应去中心化) 和 'FedAvg' (平均聚合)
+        联邦聚合方法：支持 'DSFA' (自适应去中心化)、
+        'AllDSFA' (Actor 和 Critic 同时自适应聚合) 和 'FedAvg' (平均聚合)。
         """
         if self.replay.size() < self.batch_size:
             return None
-        if any(len(h) == 0 for h in self.proto_history) and method == 'DSFA':
+        if any(len(h) == 0 for h in self.proto_history) and method in ('DSFA', 'AllDSFA'):
             return None
 
         Federated_w_return = None
@@ -263,6 +264,74 @@ class IDDPG:
                         p.data.copy_(np_.data)
 
             # 5) 清空历史
+            self.proto_history = [[] for _ in range(self.n_agents)]
+
+        elif method == 'AllDSFA':
+            # === AllDSFA 消融实验：Actor 与 Critic 使用同一组 DSFA 权重 ===
+            # 1) 历史 proto 平均
+            avg_proto = []
+            for j in range(self.n_agents):
+                hist = self.proto_history[j]  # list of cpu tensors (Feat,)
+                avg = torch.stack(hist, dim=0).mean(dim=0).to(device)
+                avg_proto.append(avg)
+
+            # 2) 用当前一个 batch 估计“参考 proto”
+            obs_b, _, _, _, _ = self.replay.sample(self.batch_size)
+            obs_b_t = torch.FloatTensor(obs_b).to(device)
+            proto_ref = []
+            with torch.no_grad():
+                for i in range(self.n_agents):
+                    oi = obs_b_t[:, self._obs_slices[i]]
+                    out_i = self.actors[i](oi)
+                    proto_ref.append(out_i.mean(dim=0))  # (Feat,)
+
+            # 3) 保持与 DSFA 分支完全一致的聚合权重计算
+            eps = 1e-8
+            Federated_w = []
+            for i in range(self.n_agents):
+                row = []
+                for j in range(self.n_agents):
+                    d = F.l1_loss(proto_ref[i], avg_proto[j], reduction='mean').item()
+                    row.append(1.0 / (d + eps))
+                w = np.array(row, dtype=np.float64)
+                w = w / (w.sum() + 1e-12)
+                Federated_w.append(w)
+
+            Federated_w_return = np.array(Federated_w)
+
+            # 4) Actor 的聚合方式与 DSFA 保持一致
+            with torch.no_grad():
+                new_actors = []
+                for i in range(self.n_agents):
+                    for p in self.template.parameters():
+                        p.data.zero_()
+                    for j in range(self.n_agents):
+                        w_ij = Federated_w[i][j]
+                        for tp, pj in zip(self.template.parameters(), self.actors[j].parameters()):
+                            tp.data.add_(pj.data, alpha=w_ij)
+                    new_actors.append(copy.deepcopy(self.template))
+
+                for i in range(self.n_agents):
+                    for p, np_ in zip(self.actors[i].parameters(), new_actors[i].parameters()):
+                        p.data.copy_(np_.data)
+
+                # Critic 不再保持完全独立，而是使用对应 Actor 的同一行权重聚合。
+                critic_template = copy.deepcopy(self.critics[0]).to(device)
+                new_critics = []
+                for i in range(self.n_agents):
+                    for p in critic_template.parameters():
+                        p.data.zero_()
+                    for j in range(self.n_agents):
+                        w_ij = Federated_w[i][j]
+                        for tp, pj in zip(critic_template.parameters(), self.critics[j].parameters()):
+                            tp.data.add_(pj.data, alpha=w_ij)
+                    new_critics.append(copy.deepcopy(critic_template))
+
+                for i in range(self.n_agents):
+                    for p, np_ in zip(self.critics[i].parameters(), new_critics[i].parameters()):
+                        p.data.copy_(np_.data)
+
+            # 5) 清空历史，开始下一轮 proto 累计
             self.proto_history = [[] for _ in range(self.n_agents)]
 
         return Federated_w_return
