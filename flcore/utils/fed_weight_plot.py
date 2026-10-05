@@ -1,4 +1,5 @@
 import os,re
+import traceback
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -162,8 +163,10 @@ def inspect_npy_file(file_path: str):
         print("-" * 40)
 
     except Exception as e:
-        print(f"读取或解析文件时发生错误: {e}")
+        error_trace = traceback.format_exc()
 
+        print(f"读取或解析文件时发生错误: {e}")
+        print(error_trace)
     finally:
         print("--- 检查结束 ---")
 
