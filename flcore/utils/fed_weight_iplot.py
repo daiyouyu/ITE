@@ -1,6 +1,8 @@
+import os,re
+
 import numpy as np
-import os
 import matplotlib.pyplot as plt
+from datetime import datetime
 from matplotlib import font_manager
 
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -15,6 +17,7 @@ FONT_LIST = [
     "WenQuanYi Micro Hei",  # 文泉驿微米黑 (Linux)
     "Noto Sans CJK SC",  # 思源黑体
 ]
+OUTPUT_RESULT_PATH = "D:\\ITE\\result\\fed_weights"
 
 # 获取系统中所有真实安装的字体名称
 installed_fonts = [f.name for f in font_manager.fontManager.ttflist]
@@ -138,7 +141,12 @@ def inspect_npy_file(file_path: str):
                     ax.spines['top'].set_visible(False)
                     ax.spines['right'].set_visible(False)
                     fig.tight_layout()
-                    print("绘图完成，请查看弹出的窗口。")
+
+                    match = re.search(r'fed_weights_(.*?)_\d+\.npy$', target_file)
+                    method = match.group(1)
+                    output_path = OUTPUT_RESULT_PATH + r"\\" + method
+                    fig.savefig(output_path, dpi=600, bbox_inches="tight")
+                    print(f"绘图完成，路径：{output_path}")
                     plt.show()
 
                 except Exception as plot_e:
@@ -162,6 +170,7 @@ def inspect_npy_file(file_path: str):
 
 if __name__ == "__main__":
     target_file = 'D:\\ITE\\result/20260404/fed_weights_DSFA_194147.npy'
+    # target_file = 'D:\\ITE\\result\\20261005\\fed_weights_AllDSFA_004613.npy'
     if os.path.exists(target_file):
         inspect_npy_file(target_file)
     else:
