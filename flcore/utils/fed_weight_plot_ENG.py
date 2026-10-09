@@ -1,9 +1,9 @@
-import os,re
+import os
 import traceback
 
 import numpy as np
 import matplotlib.pyplot as plt
-from datetime import datetime
+from matplotlib.axes import Axes
 from matplotlib import font_manager
 
 plt.style.use('seaborn-v0_8-whitegrid')
@@ -38,14 +38,17 @@ else:
     print("[!] 警告: 未在系统中检测到常见的中文字体，图表中文可能显示为方块。")
 
 
-def inspect_npy_file(file_path: str):
+def inspect_npy_file(file_path: str, ax: Axes, title: str) -> bool:
     """
-    加载并检查一个 .npy 文件，打印其类型、形状、数据类型和内容摘要。
-    这个函数特别优化了对包含字典的 .npy 文件的检查（在联邦学习中很常见）。
-    新增了对常规 NumPy 数组（1D或2D）的可视化绘图功能。
+    检查权重文件，并在指定子图中绘制一维、二维或三维方阵的权重变化。
 
     Args:
-        file_path (str): .npy 文件的路径。
+        file_path: .npy 文件路径。
+        ax: 用于绘图的子图坐标轴。
+        title: 子图标题。
+
+    Returns:
+        成功绘图时返回 True；文件缺失、数据维度不支持或绘图失败时返回 False。
     """
     print(f"--- 开始检查文件: {os.path.basename(file_path)} ---")
 
@@ -53,7 +56,7 @@ def inspect_npy_file(file_path: str):
     if not os.path.exists(file_path):
         print(f"错误: 文件未找到 '{file_path}'")
         print("--- 检查结束 ---")
-        return
+        return False
 
     try:
         # 2. 加载 .npy 文件
@@ -100,8 +103,6 @@ def inspect_npy_file(file_path: str):
                 print("\n正在生成折线图...")
                 try:
                     # --- 美化改进 ---
-                    fig, ax = plt.subplots(figsize=(14, 8))
-
                     # 定义一个好看的颜色循环
                     custom_colors_rgb_255 = [
                         (31, 119, 180),
@@ -125,33 +126,29 @@ def inspect_npy_file(file_path: str):
                             current_color = colors[i % len(colors)]
                             ax.plot(raw_data, color=current_color, alpha=0.3, linewidth=1.0)
                             smoothed_data, smoothed_x = simple_moving_average(raw_data)
-                            ax.plot(smoothed_x, smoothed_data, color=current_color, label=f'Agent {i + 1}',
+                            ax.plot(smoothed_x, smoothed_data, color=current_color, label=f'IES{i + 1}',
                                     linewidth=2.5)
-                        ax.legend(title="智能体", frameon=True, shadow=True, loc='best', fontsize=10)
+                        ax.legend(title="IES parks", frameon=True, shadow=True, loc='best', fontsize=10)
 
                     else:
                         raw_data = plot_data
                         ax.plot(raw_data, color=colors[0], alpha=0.3, linewidth=1.0)
                         smoothed_data, smoothed_x = simple_moving_average(raw_data)
-                        ax.plot(smoothed_x, smoothed_data, color=colors[0], label='权重值 (平滑)', linewidth=2.5)
-                        ax.legend(frameon=True, shadow=True)
+                        ax.plot(smoothed_x, smoothed_data, color=colors[0], label='IES1', linewidth=2.5)
+                        ax.legend(title="IES parks", frameon=True, shadow=True)
 
-                    ax.set_title(f'联邦权重历史', fontsize=16, fontweight='bold', pad=20)
-                    ax.set_xlabel("Episode ", fontsize=12)
-                    ax.set_ylabel("权重值", fontsize=12)
+                    ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
+                    ax.set_xlabel("Episode", fontsize=12)
+                    ax.set_ylabel(r"Self-Aggregation Weight, $W_{ii}$", fontsize=12)
+                    ax.set_ylim(0.3, 0.8)
+                    ax.set_xlim(left = 0.0)
                     ax.spines['top'].set_visible(False)
                     ax.spines['right'].set_visible(False)
-                    fig.tight_layout()
-
-                    match = re.search(r'fed_weights_(.*?)_\d+\.npy$', target_file)
-                    method = match.group(1)
-                    output_path = OUTPUT_RESULT_PATH + r"\\" + method
-                    fig.savefig(output_path, dpi=600, bbox_inches="tight")
-                    print(f"绘图完成，路径：{output_path}")
-                    plt.show()
+                    return True
 
                 except Exception as plot_e:
                     print(f"绘制图形时发生错误: {plot_e}")
+                    return False
             else:
                 print(f"\n数组维度 ({data.ndim}) 暂不支持绘图。")
 
@@ -161,21 +158,35 @@ def inspect_npy_file(file_path: str):
             print(data)
 
         print("-" * 40)
+        return False
 
     except Exception as e:
         error_trace = traceback.format_exc()
 
         print(f"读取或解析文件时发生错误: {e}")
         print(error_trace)
+        return False
     finally:
         print("--- 检查结束 ---")
 
 
 if __name__ == "__main__":
-    target_file = 'D:\\ITE\\result\\20261005\\fed_weights_AllDSFA_004613.npy'
-    # target_file = 'D:\\ITE\\result\\20261005\\fed_weights_AllDSFA_004613.npy'
-    if os.path.exists(target_file):
-        inspect_npy_file(target_file)
+    test_file = 'D:\\ITE\\result\\20260404\\fed_weights_DSFA_194147.npy'
+    comparsion_file = 'D:\\ITE\\result\\20261005\\fed_weights_AllDSFA_004613.npy'
+
+    fig, axes = plt.subplots(1, 2, figsize=(20, 7), sharey=True)
+    test_ok = inspect_npy_file(test_file, axes[0], "(a) DSFA with Local Critics")
+    comparison_ok = inspect_npy_file(
+        comparsion_file, axes[1], "(b) DSFA with Actor–Critic Aggregation"
+    )
+
+    if test_ok and comparison_ok:
+        fig.tight_layout()
+        os.makedirs(OUTPUT_RESULT_PATH, exist_ok=True)
+        output_path = os.path.join(OUTPUT_RESULT_PATH, "fed_weights_DSFA_comparison_ENG.png")
+        fig.savefig(output_path, dpi=600, bbox_inches="tight")
+        print(f"绘图完成，路径：{output_path}")
+        plt.show()
     else:
-        print(f"错误: 示例文件未找到 '{target_file}'")
-        print("请在脚本中修改 'target_file' 变量为你的 .npy 文件路径。")
+        plt.close(fig)
+        print("绘图失败：请检查两个权重文件及其数据维度。")
