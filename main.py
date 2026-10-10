@@ -41,6 +41,24 @@ def main(args):
         print("没有有效的任务可运行。程序退出。")
         return
 
+    if args.lost_contact:
+        # 断联实验独立保存全部分支结果，避免改写原有训练输出。
+        unsupported = [name for name in valid_run_names if name not in ("DSFA", "FedAvg")]
+        if unsupported:
+            raise ValueError(f"断联对比实验仅支持 DSFA 和 FedAvg: {unsupported}")
+        from flcore.train.train_iddpg import train_iddpg_lost_contact
+
+        for run_name in valid_run_names:
+            train_iddpg_lost_contact(
+                episodes=args.epochs,
+                train=args.train_days,
+                fed_method=run_name,
+                branch_episode=200,
+                lost_agent="agent_0",
+                disconnect_schedule=((200, 400), (600, 800)),
+            )
+        return
+
     # 用于保存结果的字典
     results_to_save = {}
 
@@ -134,6 +152,12 @@ if __name__ == "__main__":
         type=int,
         default=4,
         help="并行模式下的最大工作进程数。默认: 4"
+    )
+    parser.add_argument(
+        '--lost-contact',
+        action='store_true',
+        default=False,
+        help="启用园区 1 两次失联、两次重连的共同训练及分支对比实验。",
     )
 
     # 解析命令行参数

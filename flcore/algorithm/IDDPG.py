@@ -121,7 +121,7 @@ class IDDPG:
         return actions
 
     # 一步更新（与 MADDPG 的外形一致；但每个 agent 的 critic 只看自己的 obs/act）
-    def update(self):
+    def update(self, online_agents=None):
         if self.replay.size() < self.batch_size:
             return
 
@@ -167,8 +167,12 @@ class IDDPG:
 
             # 累计 batch 维度上的 proto 均值，入历史
             with torch.no_grad():
-                self.proto_history[i].append(act_pred.mean(dim=0).detach().cpu())
-                self.Federated_proto.append(proto_i.detach())
+                # 断联园区继续本地更新，但不对外提供动作描述符。
+                if online_agents is None or i in online_agents:
+                    self.proto_history[i].append(act_pred.mean(dim=0).detach().cpu())
+                    self.Federated_proto.append(proto_i.detach())
+                else:
+                    self.proto_history[i].clear()
 
             # -------- 软更新 target --------
             for p, p_t in zip(self.actors[i].parameters(), self.actor_targets[i].parameters()):
@@ -176,165 +180,73 @@ class IDDPG:
             for p, p_t in zip(self.critics[i].parameters(), self.critic_targets[i].parameters()):
                 p_t.data.copy_(self.tau * p.data + (1.0 - self.tau) * p_t.data)
 
-    def Fed_Aggergate(self, method='DSFA'):
+    def Fed_Aggergate(self, method='DSFA', online_agents=None):
+        """按在线园区集合聚合，返回完整权重矩阵（离线行列为零）。
+
+        Args:
+            method: DSFA、AllDSFA 或 FedAvg。
+            online_agents: 本轮参与通信的园区索引，None 表示全部在线。
+
+        Returns:
+            成功时返回 n_agents × n_agents 权重矩阵；历史不足时返回 None。
         """
-        联邦聚合方法：支持 'DSFA' (自适应去中心化)、
-        'AllDSFA' (Actor 和 Critic 同时自适应聚合) 和 'FedAvg' (平均聚合)。
-        """
+        online = list(range(self.n_agents)) if online_agents is None else list(online_agents)
+        if len(set(online)) != len(online) or any(i < 0 or i >= self.n_agents for i in online):
+            raise ValueError("online_agents 包含无效或重复的园区索引")
+        if not online:
+            return None
+        if method not in ('DSFA', 'AllDSFA', 'FedAvg'):
+            raise ValueError(f"未知聚合方法: {method}")
         if self.replay.size() < self.batch_size:
             return None
-        if any(len(h) == 0 for h in self.proto_history) and method in ('DSFA', 'AllDSFA'):
+        if method != 'FedAvg' and any(not self.proto_history[i] for i in online):
             return None
 
-        Federated_w_return = None
-
+        weights = np.zeros((self.n_agents, self.n_agents), dtype=np.float64)
         if method == 'FedAvg':
-            # === FedAvg 逻辑 ===
-            # 将所有 actor 参数简单平均
-            with torch.no_grad():
-                for p in self.template.parameters():
-                    p.data.zero_()
-                
-                # 累加参数
-                for j in range(self.n_agents):
-                    for tp, pj in zip(self.template.parameters(), self.actors[j].parameters()):
-                        tp.data.add_(pj.data)
-                
-                # 计算平均值
-                for tp in self.template.parameters():
-                    tp.data.div_(self.n_agents)
-                
-                # 回写到所有本地 actor
-                for i in range(self.n_agents):
-                    for p, avg_p in zip(self.actors[i].parameters(), self.template.parameters()):
-                        p.data.copy_(avg_p.data)
-                        
-            # 清空历史以保持与原有逻辑一致
-            self.proto_history = [[] for _ in range(self.n_agents)]
-
-        elif method == 'DSFA':
-            # === DSFA 原有逻辑 ===
-            # 1) 历史 proto 平均
-            avg_proto = []
-            for j in range(self.n_agents):
-                hist = self.proto_history[j]  # list of cpu tensors (Feat,)
-                avg = torch.stack(hist, dim=0).mean(dim=0).to(device)
-                avg_proto.append(avg)
-
-            # 2) 用当前一个 batch 估计“参考 proto”
+            weights[np.ix_(online, online)] = 1.0 / len(online)
+        else:
+            avg_proto = {
+                j: torch.stack(self.proto_history[j], dim=0).mean(dim=0).to(device)
+                for j in online
+            }
             obs_b, _, _, _, _ = self.replay.sample(self.batch_size)
-            obs_b_t = torch.FloatTensor(obs_b).to(device)
-            proto_ref = []
+            obs_b_t = torch.as_tensor(obs_b, dtype=torch.float32, device=device)
             with torch.no_grad():
-                for i in range(self.n_agents):
-                    oi = obs_b_t[:, self._obs_slices[i]]
-                    out_i = self.actors[i](oi)
-                    proto_ref.append(out_i.mean(dim=0))  # (Feat,)
+                proto_ref = {
+                    i: self.actors[i](obs_b_t[:, self._obs_slices[i]]).mean(dim=0)
+                    for i in online
+                }
+            for i in online:
+                similarity = np.array([
+                    1.0 / (F.l1_loss(proto_ref[i], avg_proto[j], reduction='mean').item() + 1e-8)
+                    for j in online
+                ], dtype=np.float64)
+                weights[i, online] = similarity / similarity.sum()
 
-            # 3) 基于 L1 距离的权重矩阵
-            eps = 1e-8
-            Federated_w = []
-            for i in range(self.n_agents):
-                row = []
-                for j in range(self.n_agents):
-                    d = F.l1_loss(proto_ref[i], avg_proto[j], reduction='mean').item()
-                    row.append(1.0 / (d + eps))
-                w = np.array(row, dtype=np.float64)
-                w = w / (w.sum() + 1e-12)
-                Federated_w.append(w)
+        # 全部新参数取自同一聚合前快照，避免园区遍历顺序影响结果。
+        with torch.no_grad():
+            actor_snapshot = [[p.detach().clone() for p in actor.parameters()] for actor in self.actors]
+            actor_updates = {}
+            for i in online:
+                actor_updates[i] = [
+                    sum((weights[i, j] * actor_snapshot[j][k] for j in online))
+                    for k in range(len(actor_snapshot[i]))
+                ]
+            for i, parameters in actor_updates.items():
+                for target, value in zip(self.actors[i].parameters(), parameters):
+                    target.copy_(value)
 
-            # 修改：只返回每个代理在聚合中对自己的权重分配 (即对角线元素)
-            Federated_w_return = np.array(Federated_w)
+            if method == 'AllDSFA':
+                critic_snapshot = [[p.detach().clone() for p in critic.parameters()] for critic in self.critics]
+                for i in online:
+                    for k, target in enumerate(self.critics[i].parameters()):
+                        target.copy_(sum((weights[i, j] * critic_snapshot[j][k] for j in online)))
 
-            # 4) 依据权重做参数聚合，分别得到每个 agent 的新 actor
-            with torch.no_grad():
-                new_actors = []
-                for i in range(self.n_agents):
-                    for p in self.template.parameters():
-                        p.data.zero_()
-                    for j in range(self.n_agents):
-                        w_ij = Federated_w[i][j]
-                        for tp, pj in zip(self.template.parameters(), self.actors[j].parameters()):
-                            tp.data.add_(pj.data, alpha=w_ij)
-                    new_actors.append(copy.deepcopy(self.template))
-
-                # 回写
-                for i in range(self.n_agents):
-                    for p, np_ in zip(self.actors[i].parameters(), new_actors[i].parameters()):
-                        p.data.copy_(np_.data)
-
-            # 5) 清空历史
-            self.proto_history = [[] for _ in range(self.n_agents)]
-
-        elif method == 'AllDSFA':
-            # === AllDSFA 消融实验：Actor 与 Critic 使用同一组 DSFA 权重 ===
-            # 1) 历史 proto 平均
-            avg_proto = []
-            for j in range(self.n_agents):
-                hist = self.proto_history[j]  # list of cpu tensors (Feat,)
-                avg = torch.stack(hist, dim=0).mean(dim=0).to(device)
-                avg_proto.append(avg)
-
-            # 2) 用当前一个 batch 估计“参考 proto”
-            obs_b, _, _, _, _ = self.replay.sample(self.batch_size)
-            obs_b_t = torch.FloatTensor(obs_b).to(device)
-            proto_ref = []
-            with torch.no_grad():
-                for i in range(self.n_agents):
-                    oi = obs_b_t[:, self._obs_slices[i]]
-                    out_i = self.actors[i](oi)
-                    proto_ref.append(out_i.mean(dim=0))  # (Feat,)
-
-            # 3) 保持与 DSFA 分支完全一致的聚合权重计算
-            eps = 1e-8
-            Federated_w = []
-            for i in range(self.n_agents):
-                row = []
-                for j in range(self.n_agents):
-                    d = F.l1_loss(proto_ref[i], avg_proto[j], reduction='mean').item()
-                    row.append(1.0 / (d + eps))
-                w = np.array(row, dtype=np.float64)
-                w = w / (w.sum() + 1e-12)
-                Federated_w.append(w)
-
-            Federated_w_return = np.array(Federated_w)
-
-            # 4) Actor 的聚合方式与 DSFA 保持一致
-            with torch.no_grad():
-                new_actors = []
-                for i in range(self.n_agents):
-                    for p in self.template.parameters():
-                        p.data.zero_()
-                    for j in range(self.n_agents):
-                        w_ij = Federated_w[i][j]
-                        for tp, pj in zip(self.template.parameters(), self.actors[j].parameters()):
-                            tp.data.add_(pj.data, alpha=w_ij)
-                    new_actors.append(copy.deepcopy(self.template))
-
-                for i in range(self.n_agents):
-                    for p, np_ in zip(self.actors[i].parameters(), new_actors[i].parameters()):
-                        p.data.copy_(np_.data)
-
-                # Critic 不再保持完全独立，而是使用对应 Actor 的同一行权重聚合。
-                critic_template = copy.deepcopy(self.critics[0]).to(device)
-                new_critics = []
-                for i in range(self.n_agents):
-                    for p in critic_template.parameters():
-                        p.data.zero_()
-                    for j in range(self.n_agents):
-                        w_ij = Federated_w[i][j]
-                        for tp, pj in zip(critic_template.parameters(), self.critics[j].parameters()):
-                            tp.data.add_(pj.data, alpha=w_ij)
-                    new_critics.append(copy.deepcopy(critic_template))
-
-                for i in range(self.n_agents):
-                    for p, np_ in zip(self.critics[i].parameters(), new_critics[i].parameters()):
-                        p.data.copy_(np_.data)
-
-            # 5) 清空历史，开始下一轮 proto 累计
-            self.proto_history = [[] for _ in range(self.n_agents)]
-
-        return Federated_w_return
+        # 仅清除参与通信的描述符。断联园区由 update 清理，恢复时从近期更新重新积累。
+        for i in online:
+            self.proto_history[i].clear()
+        return weights
 
     # 保存 / 加载（对齐 MADDPG）
     def save(self, prefix="iddpg",Fed=False):
@@ -344,6 +256,37 @@ class IDDPG:
         for i in range(self.n_agents):
             torch.save(self.actors[i].state_dict(), f"{file_path}/{Fed}_actor_{i}.pth")
             torch.save(self.critics[i].state_dict(), f"{file_path}/{Fed}_critic_{i}.pth")
+
+    def checkpoint_state(self):
+        """导出可继续训练的完整状态，包括网络、优化器及经验缓存。"""
+        return {
+            "actors": [model.state_dict() for model in self.actors],
+            "actor_targets": [model.state_dict() for model in self.actor_targets],
+            "critics": [model.state_dict() for model in self.critics],
+            "critic_targets": [model.state_dict() for model in self.critic_targets],
+            "actor_opts": [opt.state_dict() for opt in self.actor_opts],
+            "critic_opts": [opt.state_dict() for opt in self.critic_opts],
+            "replay": list(self.replay.buffer),
+            "proto_history": self.proto_history,
+        }
+
+    def load_checkpoint_state(self, state):
+        """加载完整训练状态；网络及优化器顺序与园区索引一致。"""
+        for name in ("actors", "actor_targets", "critics", "critic_targets"):
+            for model, weights in zip(getattr(self, name), state[name]):
+                model.load_state_dict(weights)
+        for name in ("actor_opts", "critic_opts"):
+            for optimizer, weights in zip(getattr(self, name), state[name]):
+                optimizer.load_state_dict(weights)
+        self.replay.buffer = deque(state["replay"], maxlen=self.replay.max_size)
+        self.proto_history = state["proto_history"]
+
+    def save_to_directory(self, directory):
+        """保存分支模型参数至独立目录，沿用原模型文件命名规则。"""
+        os.makedirs(directory, exist_ok=True)
+        for i in range(self.n_agents):
+            torch.save(self.actors[i].state_dict(), os.path.join(directory, f"True_actor_{i}.pth"))
+            torch.save(self.critics[i].state_dict(), os.path.join(directory, f"True_critic_{i}.pth"))
 
     def load(self, prefix="iddpg",Fed=False):
         for i in range(self.n_agents):
