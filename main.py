@@ -1,10 +1,11 @@
 import numpy as np
 import os
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime as dt
 
 # 仅从并行工具中导入工作函数，主脚本将负责管理进程池
-from flcore.utils.parallel_train import train_worker
+from flcore.utils.parallel_train import train_worker, train_lost_contact_worker
 import multiprocessing as mp
 
 def main(args):
@@ -46,17 +47,42 @@ def main(args):
         unsupported = [name for name in valid_run_names if name not in ("DSFA", "FedAvg")]
         if unsupported:
             raise ValueError(f"断联对比实验仅支持 DSFA 和 FedAvg: {unsupported}")
-        from flcore.train.train_iddpg import train_iddpg_lost_contact
+        if len(set(valid_run_names)) != len(valid_run_names):
+            raise ValueError("断联对比实验不能重复指定同一算法，以免覆盖同一目录")
+        if args.workers < 1:
+            raise ValueError("--workers 必须大于或等于 1")
 
-        for run_name in valid_run_names:
-            train_iddpg_lost_contact(
-                episodes=args.epochs,
-                train=args.train_days,
-                fed_method=run_name,
-                branch_episode=200,
-                lost_agent="agent_0",
-                disconnect_schedule=((200, 400), (600, 800)),
-            )
+        branch_episode = 200
+        lost_agent = "agent_0"
+        disconnect_schedule = ((200, 400), (600, 800))
+        num_workers = min(len(valid_run_names), mp.cpu_count(), args.workers)
+        if args.mode == 'parallel' and num_workers > 1:
+            cpu_threads = max(1, mp.cpu_count() // num_workers)
+            worker_tasks = [
+                (name, args.epochs, args.train_days, branch_episode,
+                 lost_agent, disconnect_schedule, cpu_threads)
+                for name in valid_run_names
+            ]
+            print(f"断联实验并行训练: {', '.join(valid_run_names)}，进程数: {num_workers}")
+            # 外层进程需要继续启动两个分支进程，不能使用守护型 Pool worker。
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                futures = [executor.submit(train_lost_contact_worker, *task)
+                           for task in worker_tasks]
+                completed = [future.result() for future in futures]
+            print(f"断联实验完成: {', '.join(completed)}")
+        else:
+            from flcore.train.train_iddpg import train_iddpg_lost_contact
+
+            for run_name in valid_run_names:
+                print(f"断联实验串行训练: {run_name}")
+                train_iddpg_lost_contact(
+                    episodes=args.epochs,
+                    train=args.train_days,
+                    fed_method=run_name,
+                    branch_episode=branch_episode,
+                    lost_agent=lost_agent,
+                    disconnect_schedule=disconnect_schedule,
+                )
         return
 
     # 用于保存结果的字典
