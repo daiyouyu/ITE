@@ -65,7 +65,10 @@ def main(args):
             ]
             print(f"断联实验并行训练: {', '.join(valid_run_names)}，进程数: {num_workers}")
             # 外层进程需要继续启动两个分支进程，不能使用守护型 Pool worker。
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            with ProcessPoolExecutor(
+                max_workers=num_workers,
+                mp_context=mp.get_context("spawn"),
+            ) as executor:
                 futures = [executor.submit(train_lost_contact_worker, *task)
                            for task in worker_tasks]
                 completed = [future.result() for future in futures]

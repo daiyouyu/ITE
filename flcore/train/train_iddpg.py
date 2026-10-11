@@ -8,7 +8,7 @@ import random
 import torch
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime as dt
-from multiprocessing import shared_memory
+from multiprocessing import get_context, shared_memory
 from flcore.train.train_common import (
     default_presets, load_series_split, build_envs,
     infer_dims, list_by_agents, flatten_obs, flatten_actions
@@ -257,7 +257,8 @@ def train_iddpg_lost_contact(
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-        with ProcessPoolExecutor(max_workers=2) as executor:
+        # Linux 默认 fork 会继承共同训练阶段的 CUDA 状态，子进程无法再次初始化。
+        with ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn")) as executor:
             futures = [
                 executor.submit(
                     _train_lost_contact_branch, branch, shared.name, shared_size,
