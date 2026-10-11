@@ -4,6 +4,7 @@
 结果
 data/figure
 *.png
+*.pt
 
 # ------------python默认不提交--------------------
 # Byte-compiled / optimized / DLL files
