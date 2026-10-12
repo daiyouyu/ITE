@@ -23,6 +23,7 @@ def train_lost_contact_worker(
     disconnect_schedule: tuple[tuple[int, int], ...],
     cpu_threads: int,
     output_root: str = ".",
+    branch_workers: int = 2,
 ) -> str:
     """在独立进程运行一个算法的断联对比实验。
 
@@ -35,6 +36,7 @@ def train_lost_contact_worker(
         disconnect_schedule: 左闭右开的失联区间。
         cpu_threads: 此进程可使用的 PyTorch CPU 线程数。
         output_root: 模型与结果根目录，默认使用当前工作目录。
+        branch_workers: 同一算法同时运行的分支进程数。
 
     Returns:
         已完成的算法名称；训练结果由训练函数写入算法专属目录。
@@ -50,7 +52,8 @@ def train_lost_contact_worker(
         branch_episode=branch_episode,
         lost_agent=lost_agent,
         disconnect_schedule=disconnect_schedule,
-        branch_cpu_threads=max(1, cpu_threads // 2),
+        branch_cpu_threads=max(1, cpu_threads // branch_workers),
+        branch_workers=branch_workers,
         output_root=output_root,
     )
     return fed_method

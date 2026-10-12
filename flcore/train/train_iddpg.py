@@ -15,6 +15,9 @@ from flcore.train.train_common import (
 )
 from flcore.algorithm.IDDPG import IDDPG
 from flcore.Env.multi_env import MultiBatteryCoordinator
+from flcore.utils.memory_guard import (
+    GIB, RESERVED_MEMORY_BYTES, available_memory_bytes, safe_training_jobs,
+)
 from flcore.utils.print_epreward import format_episode_info
 
 
@@ -112,7 +115,7 @@ def _train_lost_contact_branch(
     shared = shared_memory.SharedMemory(name=shared_name)
     try:
         snapshot = torch.load(
-            io.BytesIO(shared.buf[:shared_size].tobytes()),
+            io.BytesIO(shared.buf[:shared_size]),
             map_location="cpu",
             weights_only=False,
         )
@@ -168,6 +171,53 @@ def _train_lost_contact_branch(
         env.close()
 
 
+def _share_training_snapshot(
+    snapshot: dict,
+    branch_workers: int,
+) -> tuple[shared_memory.SharedMemory, int, int]:
+    """将共同阶段状态复制到共享内存，并按当前空闲内存收紧分支并发数。
+
+    Args:
+        snapshot: 包含模型、经验缓存、随机状态和共同阶段结果的快照。
+        branch_workers: 期望同时训练的分支数量。
+
+    Returns:
+        共享内存对象、序列化字节数和可安全启动的分支进程数。
+
+    Raises:
+        MemoryError: 当前内存不足以安全启动一个分支时抛出。
+    """
+    serialized = io.BytesIO()
+    torch.save(snapshot, serialized)
+    payload = serialized.getbuffer()
+    shared = None
+    try:
+        snapshot_size = len(payload)
+        available = available_memory_bytes()
+        if available is not None:
+            # 每个子进程反序列化时会另建 replay 和模型，预留固定空间与快照放大空间。
+            per_branch = max(2 * GIB, 4 * snapshot_size)
+            while branch_workers > 1 and available < RESERVED_MEMORY_BYTES + branch_workers * per_branch:
+                branch_workers -= 1
+            if available < RESERVED_MEMORY_BYTES + per_branch:
+                raise MemoryError(
+                    f"断联分支启动前可用内存仅 {available / GIB:.1f} GiB；"
+                    f"至少需要 {(RESERVED_MEMORY_BYTES + per_branch) / GIB:.1f} GiB。"
+                    "请减少并发或增加可用内存。"
+                )
+        shared = shared_memory.SharedMemory(create=True, size=snapshot_size)
+        try:
+            shared.buf[:snapshot_size] = payload
+        except BaseException:
+            shared.close()
+            shared.unlink()
+            raise
+        return shared, snapshot_size, branch_workers
+    finally:
+        payload.release()
+        serialized.close()
+
+
 def train_iddpg_lost_contact(
     episodes: int = 1000,
     train: int = 365,
@@ -177,6 +227,7 @@ def train_iddpg_lost_contact(
     disconnect_schedule: tuple[tuple[int, int], ...] = ((200, 400), (600, 800)),
     branch_cpu_threads: int | None = None,
     output_root: str = ".",
+    branch_workers: int = 2,
 ) -> dict[str, np.ndarray]:
     """共同训练后经内存快照并行启动正常与断联分支，不写磁盘检查点。
 
@@ -189,6 +240,7 @@ def train_iddpg_lost_contact(
         disconnect_schedule: 左闭右开的失联 episode 区间。
         branch_cpu_threads: 每个分支进程可用的 PyTorch CPU 线程数。
         output_root: 模型和结果的根目录，默认使用当前工作目录。
+        branch_workers: 同时运行的分支数，取 1 或 2；内存不足时自动降为 1。
 
     Returns:
         正常、断联分支到逐 episode 训练奖励数组的映射。
@@ -203,6 +255,9 @@ def train_iddpg_lost_contact(
         branch_cpu_threads = max(1, (os.cpu_count() or 1) // 2)
     if branch_cpu_threads < 1:
         raise ValueError("branch_cpu_threads 必须大于或等于 1")
+    if branch_workers not in (1, 2):
+        raise ValueError("branch_workers 必须为 1 或 2")
+    safe_training_jobs(1)
 
     presets = default_presets()
     train_series, _, _, train_idx, _ = load_series_split(train_days=train, test_days=0)
@@ -244,21 +299,21 @@ def train_iddpg_lost_contact(
              **{key: np.asarray(value) for key, value in common.items()},
              episodes=np.arange(branch_episode), agents=np.asarray(agents))
 
-    # Windows 进程传递大型 replay 时可能触及管道消息大小限制，改用共享内存。
-    serialized = io.BytesIO()
-    torch.save(snapshot, serialized)
-    payload = serialized.getvalue()
-    shared = shared_memory.SharedMemory(create=True, size=len(payload))
+    # 大型 replay 通过共享内存传递，并在启动分支前检查可用内存。
+    shared, shared_size, safe_branch_workers = _share_training_snapshot(snapshot, branch_workers)
     try:
-        shared.buf[:len(payload)] = payload
-        shared_size = len(payload)
-        del serialized, payload, snapshot, model
+        if safe_branch_workers < branch_workers:
+            print(f"内存保护：{fed_method} 分支并发数降为 {safe_branch_workers}", flush=True)
+        del snapshot, model, common, train_series
         # 父进程不再训练；释放共同阶段模型占用的 GPU 缓存供两个分支使用。
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         # Linux 默认 fork 会继承共同训练阶段的 CUDA 状态，子进程无法再次初始化。
-        with ProcessPoolExecutor(max_workers=2, mp_context=get_context("spawn")) as executor:
+        with ProcessPoolExecutor(
+            max_workers=safe_branch_workers,
+            mp_context=get_context("spawn"),
+        ) as executor:
             futures = [
                 executor.submit(
                     _train_lost_contact_branch, branch, shared.name, shared_size,

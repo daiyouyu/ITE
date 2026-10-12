@@ -6,6 +6,7 @@ from datetime import datetime as dt
 
 # 仅从并行工具中导入工作函数，主脚本将负责管理进程池
 from flcore.utils.parallel_train import train_worker, train_lost_contact_worker
+from flcore.utils.memory_guard import GIB, safe_training_jobs
 import multiprocessing as mp
 
 def main(args):
@@ -51,19 +52,28 @@ def main(args):
             raise ValueError("断联对比实验不能重复指定同一算法，以免覆盖同一目录")
         if args.workers < 1:
             raise ValueError("--workers 必须大于或等于 1")
+        requested_jobs = getattr(args, "lost_contact_jobs", 2)
+        safe_jobs, available_memory = safe_training_jobs(requested_jobs)
+        if safe_jobs < requested_jobs:
+            available_gib = "未知" if available_memory is None else f"{available_memory / GIB:.1f} GiB"
+            print(f"内存保护：可用内存 {available_gib}，断联训练并发数降为 {safe_jobs}")
 
         branch_episode = 200
         lost_agent = "agent_0"
         disconnect_schedule = ((200, 400), (600, 800))
-        num_workers = min(len(valid_run_names), mp.cpu_count(), args.workers)
+        num_workers = min(len(valid_run_names), mp.cpu_count(), args.workers, safe_jobs)
+        if args.mode == 'serial':
+            num_workers = 1
+        branch_workers = min(2, max(1, safe_jobs // num_workers))
         if args.mode == 'parallel' and num_workers > 1:
-            cpu_threads = max(1, mp.cpu_count() // num_workers)
+            cpu_threads = max(1, mp.cpu_count() // safe_jobs)
             worker_tasks = [
                 (name, args.epochs, args.train_days, branch_episode,
-                 lost_agent, disconnect_schedule, cpu_threads)
+                 lost_agent, disconnect_schedule, cpu_threads, ".", branch_workers)
                 for name in valid_run_names
             ]
-            print(f"断联实验并行训练: {', '.join(valid_run_names)}，进程数: {num_workers}")
+            print(f"断联实验并行训练: {', '.join(valid_run_names)}，"
+                  f"算法进程数: {num_workers}，每算法分支进程数: {branch_workers}")
             # 外层进程需要继续启动两个分支进程，不能使用守护型 Pool worker。
             with ProcessPoolExecutor(
                 max_workers=num_workers,
@@ -85,6 +95,7 @@ def main(args):
                     branch_episode=branch_episode,
                     lost_agent=lost_agent,
                     disconnect_schedule=disconnect_schedule,
+                    branch_workers=branch_workers,
                 )
         return
 
@@ -187,6 +198,12 @@ if __name__ == "__main__":
         action='store_true',
         default=False,
         help="启用园区 1 两次失联、两次重连的共同训练及分支对比实验。",
+    )
+    parser.add_argument(
+        '--lost-contact-jobs',
+        type=int,
+        default=2,
+        help="断联实验同时运行的重训练进程上限，默认 2；内存不足时自动降低。",
     )
 
     # 解析命令行参数
