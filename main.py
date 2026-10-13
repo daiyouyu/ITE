@@ -1,7 +1,7 @@
 import numpy as np
 import os
 import argparse
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime as dt
 
 # 仅从并行工具中导入工作函数，主脚本将负责管理进程池
@@ -52,7 +52,7 @@ def main(args):
             raise ValueError("断联对比实验不能重复指定同一算法，以免覆盖同一目录")
         if args.workers < 1:
             raise ValueError("--workers 必须大于或等于 1")
-        requested_jobs = getattr(args, "lost_contact_jobs", 2)
+        requested_jobs = min(getattr(args, "lost_contact_jobs", 2), args.workers)
         safe_jobs, available_memory = safe_training_jobs(requested_jobs)
         if safe_jobs < requested_jobs:
             available_gib = "未知" if available_memory is None else f"{available_memory / GIB:.1f} GiB"
@@ -64,39 +64,51 @@ def main(args):
         num_workers = min(len(valid_run_names), mp.cpu_count(), args.workers, safe_jobs)
         if args.mode == 'serial':
             num_workers = 1
-        branch_workers = min(2, max(1, safe_jobs // num_workers))
-        if args.mode == 'parallel' and num_workers > 1:
-            cpu_threads = max(1, mp.cpu_count() // safe_jobs)
-            worker_tasks = [
-                (name, args.epochs, args.train_days, branch_episode,
-                 lost_agent, disconnect_schedule, cpu_threads, ".", branch_workers)
-                for name in valid_run_names
-            ]
-            print(f"断联实验并行训练: {', '.join(valid_run_names)}，"
-                  f"算法进程数: {num_workers}，每算法分支进程数: {branch_workers}")
-            # 外层进程需要继续启动两个分支进程，不能使用守护型 Pool worker。
-            with ProcessPoolExecutor(
-                max_workers=num_workers,
-                mp_context=mp.get_context("spawn"),
-            ) as executor:
-                futures = [executor.submit(train_lost_contact_worker, *task)
-                           for task in worker_tasks]
-                completed = [future.result() for future in futures]
-            print(f"断联实验完成: {', '.join(completed)}")
-        else:
-            from flcore.train.train_iddpg import train_iddpg_lost_contact
+        cpu_threads = max(1, mp.cpu_count() // num_workers)
+        snapshots = {}
+        try:
+            # 两阶段屏障：全部算法先完成普通协作，之后才启动任一断联分支。
+            for phase in ("normal", "disconnected"):
+                print(f"断联实验阶段 {phase}: {', '.join(valid_run_names)}，并发数: {num_workers}")
+                if args.mode == 'parallel' and num_workers > 1:
+                    with ProcessPoolExecutor(
+                        max_workers=num_workers,
+                        mp_context=mp.get_context("spawn"),
+                    ) as executor:
+                        futures = {
+                            executor.submit(
+                                train_lost_contact_worker,
+                                name, args.epochs, args.train_days, branch_episode,
+                                lost_agent, disconnect_schedule, cpu_threads, phase,
+                                snapshots.get(name), ".",
+                            ): name for name in valid_run_names
+                        }
+                        errors = []
+                        for future in as_completed(futures):
+                            try:
+                                name, snapshot_ref = future.result()
+                                if snapshot_ref is not None:
+                                    snapshots[name] = snapshot_ref
+                            except Exception as exc:
+                                errors.append(exc)
+                        if errors:
+                            raise errors[0]
+                else:
+                    from flcore.train.train_iddpg import train_iddpg
 
-            for run_name in valid_run_names:
-                print(f"断联实验串行训练: {run_name}")
-                train_iddpg_lost_contact(
-                    episodes=args.epochs,
-                    train=args.train_days,
-                    fed_method=run_name,
-                    branch_episode=branch_episode,
-                    lost_agent=lost_agent,
-                    disconnect_schedule=disconnect_schedule,
-                    branch_workers=branch_workers,
-                )
+                    for name in valid_run_names:
+                        result = train_iddpg(
+                            args.epochs, args.train_days, 0, True, name,
+                            lost_contact=True, lost_contact_phase=phase,
+                            branch_episode=branch_episode, lost_agent=lost_agent,
+                            disconnect_schedule=disconnect_schedule,
+                            snapshot_ref=snapshots.get(name),
+                        )
+                        if phase == "normal":
+                            snapshots[name] = result
+            print(f"断联实验完成: {', '.join(valid_run_names)}")
+        finally:
+            snapshots.clear()
         return
 
     # 用于保存结果的字典

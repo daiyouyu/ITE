@@ -1,14 +1,11 @@
 # -*- coding: utf-8 -*-
 import time
-import gc
 import io
 import numpy as np
 import os
 import random
 import torch
-from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime as dt
-from multiprocessing import get_context, shared_memory
 from flcore.train.train_common import (
     default_presets, load_series_split, build_envs,
     infer_dims, list_by_agents, flatten_obs, flatten_actions
@@ -100,29 +97,23 @@ def _run_lost_contact_episode(
     online_mask[online] = True
     print(f"{fed_method} {'disconnected' if disconnected else 'normal'} "
           f"ep={episode} online={[agents[i] for i in online]}", flush=True)
-    return episode_reward * 24 / max(steps, 1), episode_cost, online_mask, weights
+    # 与普通 train_iddpg 使用相同的逐 episode 奖励口径。
+    return episode_reward * 24 / max(1, steps - 1), episode_cost, online_mask, weights
 
 
-def _train_lost_contact_branch(
-    branch: str,
-    shared_name: str,
-    shared_size: int,
+def _run_disconnected_branch(
+    snapshot_payload: bytes,
     train_days: int,
-    cpu_threads: int,
-) -> tuple[str, np.ndarray]:
-    """子进程从同一内存快照恢复状态，独立续训并保存本分支结果。"""
-    torch.set_num_threads(cpu_threads)
-    shared = shared_memory.SharedMemory(name=shared_name)
-    try:
-        snapshot = torch.load(
-            io.BytesIO(shared.buf[:shared_size]),
-            map_location="cpu",
-            weights_only=False,
-        )
-    finally:
-        shared.close()
+    expected_settings: dict,
+) -> np.ndarray:
+    """从共同阶段末的内存状态续训断联分支，返回逐轮奖励。"""
+    snapshot = torch.load(
+        io.BytesIO(snapshot_payload), map_location="cpu", weights_only=False,
+    )
 
     settings = snapshot["settings"]
+    if any(settings[key] != value for key, value in expected_settings.items()):
+        raise ValueError("断联阶段配置与正常阶段的内存状态不一致")
     fed_method = settings["fed_method"]
     episodes = settings["episodes"]
     branch_episode = settings["branch_episode"]
@@ -143,7 +134,7 @@ def _train_lost_contact_branch(
         del snapshot
 
         for episode in range(branch_episode, episodes):
-            disconnected = branch == "disconnected" and any(
+            disconnected = any(
                 start <= episode < end for start, end in disconnect_schedule
             )
             values = _run_lost_contact_episode(
@@ -153,181 +144,176 @@ def _train_lost_contact_branch(
             for key, value in zip(records, values):
                 records[key].append(value)
 
-        output_root = settings["output_root"]
-        model_root = os.path.join(output_root, "model_pth", "lost_contact", fed_method)
-        result_root = os.path.join(output_root, "result", "lost_contact", fed_method)
-        model.save_to_directory(os.path.join(model_root, branch))
-        train_costs = np.asarray(records["train_costs"])
-        np.savez(os.path.join(result_root, f"{branch}_ep0_{episodes - 1}.npz"),
-                 **{key: np.asarray(value) for key, value in records.items()},
-                 lost_agent_train_costs=train_costs[:, lost_index],
-                 episodes=np.arange(episodes), agents=np.asarray(agents),
-                 branch_episode=branch_episode,
-                 disconnect_schedule=np.asarray(disconnect_schedule, dtype=np.int64))
-        np.save(os.path.join(result_root, f"{branch}_{lost_agent}_train_costs.npy"),
-                train_costs[:, lost_index])
-        return branch, np.asarray(records["train_rewards"])
+        _save_lost_contact_branch(
+            model, records, agents, settings, "disconnected", lost_index,
+        )
+        return np.asarray(records["train_rewards"])
     finally:
         env.close()
 
 
-def _share_training_snapshot(
-    snapshot: dict,
-    branch_workers: int,
-) -> tuple[shared_memory.SharedMemory, int, int]:
-    """将共同阶段状态复制到共享内存，并按当前空闲内存收紧分支并发数。
+def _save_lost_contact_branch(
+    model: IDDPG,
+    records: dict[str, list[np.ndarray]],
+    agents: list[str],
+    settings: dict,
+    branch: str,
+    lost_index: int,
+) -> None:
+    """分别保存正常或断联分支的模型、奖励、在线集合、权重与成本。"""
+    output_root = settings["output_root"]
+    fed_method = settings["fed_method"]
+    episodes = settings["episodes"]
+    model_root = os.path.join(output_root, "model_pth", "lost_contact", fed_method)
+    result_root = os.path.join(output_root, "result", "lost_contact", fed_method)
+    os.makedirs(result_root, exist_ok=True)
+    model.save_to_directory(os.path.join(model_root, branch))
+    train_costs = np.asarray(records["train_costs"])
+    np.savez(os.path.join(result_root, f"{branch}_ep0_{episodes - 1}.npz"),
+             **{key: np.asarray(value) for key, value in records.items()},
+             lost_agent_train_costs=train_costs[:, lost_index],
+             episodes=np.arange(episodes), agents=np.asarray(agents),
+             branch_episode=settings["branch_episode"],
+             disconnect_schedule=np.asarray(settings["disconnect_schedule"], dtype=np.int64))
+    np.save(os.path.join(result_root, f"{branch}_{settings['lost_agent']}_train_costs.npy"),
+            train_costs[:, lost_index])
+
+
+def _serialize_training_snapshot(snapshot: dict) -> bytes:
+    """将共同阶段状态序列化到内存，供稍后启动的断联阶段读取。
 
     Args:
         snapshot: 包含模型、经验缓存、随机状态和共同阶段结果的快照。
-        branch_workers: 期望同时训练的分支数量。
-
     Returns:
-        共享内存对象、序列化字节数和可安全启动的分支进程数。
+        不写磁盘的模型与随机状态字节串。
 
     Raises:
         MemoryError: 当前内存不足以安全启动一个分支时抛出。
     """
     serialized = io.BytesIO()
     torch.save(snapshot, serialized)
-    payload = serialized.getbuffer()
-    shared = None
     try:
+        payload = serialized.getvalue()
         snapshot_size = len(payload)
         available = available_memory_bytes()
         if available is not None:
-            # 每个子进程反序列化时会另建 replay 和模型，预留固定空间与快照放大空间。
-            per_branch = max(2 * GIB, 4 * snapshot_size)
-            while branch_workers > 1 and available < RESERVED_MEMORY_BYTES + branch_workers * per_branch:
-                branch_workers -= 1
-            if available < RESERVED_MEMORY_BYTES + per_branch:
+            # 跨阶段传递会产生暂时的进程间副本，按快照放大空间留余量。
+            required = RESERVED_MEMORY_BYTES + max(2 * GIB, 4 * snapshot_size)
+            if available < required:
                 raise MemoryError(
                     f"断联分支启动前可用内存仅 {available / GIB:.1f} GiB；"
-                    f"至少需要 {(RESERVED_MEMORY_BYTES + per_branch) / GIB:.1f} GiB。"
+                    f"至少需要 {required / GIB:.1f} GiB。"
                     "请减少并发或增加可用内存。"
                 )
-        shared = shared_memory.SharedMemory(create=True, size=snapshot_size)
-        try:
-            shared.buf[:snapshot_size] = payload
-        except BaseException:
-            shared.close()
-            shared.unlink()
-            raise
-        return shared, snapshot_size, branch_workers
+        return payload
     finally:
-        payload.release()
         serialized.close()
 
 
-def train_iddpg_lost_contact(
-    episodes: int = 1000,
-    train: int = 365,
-    fed_method: str = "DSFA",
+def train_iddpg(
+    episodes=1000,
+    train=7,
+    test=1,
+    Federated=True,
+    fed_method='DSFA',
+    *,
+    lost_contact: bool = False,
+    lost_contact_phase: str = "normal",
     branch_episode: int = 200,
     lost_agent: str = "agent_0",
     disconnect_schedule: tuple[tuple[int, int], ...] = ((200, 400), (600, 800)),
-    branch_cpu_threads: int | None = None,
+    snapshot_ref: bytes | None = None,
     output_root: str = ".",
-    branch_workers: int = 2,
-) -> dict[str, np.ndarray]:
-    """共同训练后经内存快照并行启动正常与断联分支，不写磁盘检查点。
+):
+    """训练 IDDPG；断联实验按正常、断联两个阶段调用，共享第 200 轮内存状态。
 
     Args:
-        episodes: 总 episode 数，必须大于共同阶段终点。
-        train: 训练数据天数。
-        fed_method: DSFA 或 FedAvg。
-        branch_episode: 分支开始的 episode 索引。
-        lost_agent: 通信失联园区；失联期间仍本地训练。
+        lost_contact: 启用断联对比实验；False 时保持原有训练和返回值。
+        lost_contact_phase: normal 先完成普通协作训练，disconnected 再续训失联分支。
+        branch_episode: 共同训练结束后的分支起点，必须小于总 episode 数。
+        lost_agent: 失联园区名称；失联期间仍执行本地训练。
         disconnect_schedule: 左闭右开的失联 episode 区间。
-        branch_cpu_threads: 每个分支进程可用的 PyTorch CPU 线程数。
-        output_root: 模型和结果的根目录，默认使用当前工作目录。
-        branch_workers: 同时运行的分支数，取 1 或 2；内存不足时自动降为 1。
+        snapshot_ref: normal 阶段返回的内存状态，仅断联阶段需要。
+        output_root: 断联实验模型与结果的保存根目录。
 
     Returns:
-        正常、断联分支到逐 episode 训练奖励数组的映射。
+        普通训练返回奖励与测试奖励；断联正常阶段返回内存状态字节串，
+        断联阶段返回逐 episode 奖励数组。
     """
-    if fed_method not in ("DSFA", "FedAvg"):
-        raise ValueError("断联对比实验仅支持 DSFA 和 FedAvg")
-    if not 0 < branch_episode < episodes:
-        raise ValueError("branch_episode 必须处于训练范围内")
-    if any(start < branch_episode or end <= start for start, end in disconnect_schedule):
-        raise ValueError("失联区间必须从分支阶段开始，且终点大于起点")
-    if branch_cpu_threads is None:
-        branch_cpu_threads = max(1, (os.cpu_count() or 1) // 2)
-    if branch_cpu_threads < 1:
-        raise ValueError("branch_cpu_threads 必须大于或等于 1")
-    if branch_workers not in (1, 2):
-        raise ValueError("branch_workers 必须为 1 或 2")
-    safe_training_jobs(1)
-
-    presets = default_presets()
-    train_series, _, _, train_idx, _ = load_series_split(train_days=train, test_days=0)
-    if not train_idx:
-        raise ValueError("训练数据为空；请增加 train_days")
-    env = MultiBatteryCoordinator(train_series, **presets.env_kwargs)
-    try:
-        obs_dims, action_dims, max_actions, agents = infer_dims(env)
-        if lost_agent not in agents:
-            raise ValueError(f"未知失联园区: {lost_agent}")
-        lost_index = agents.index(lost_agent)
-        model = IDDPG(obs_dims, action_dims, max_actions, **presets.algo_kwargs)
-        common = {key: [] for key in ("train_rewards", "train_costs", "online", "weights")}
-        for episode in range(branch_episode):
-            values = _run_lost_contact_episode(
-                model, env, agents, len(train_idx), presets.noise_warmup_steps,
-                episode, fed_method, lost_index, False,
+    if lost_contact:
+        if not Federated or fed_method not in ("DSFA", "FedAvg"):
+            raise ValueError("断联实验仅支持联邦 DSFA 和 FedAvg")
+        if not 0 < branch_episode < episodes:
+            raise ValueError("branch_episode 必须处于训练范围内")
+        if any(start < branch_episode or end <= start for start, end in disconnect_schedule):
+            raise ValueError("失联区间必须从分支阶段开始，且终点大于起点")
+        if lost_contact_phase == "disconnected":
+            if snapshot_ref is None:
+                raise ValueError("断联阶段需要正常阶段生成的内存状态")
+            safe_training_jobs(1)
+            return _run_disconnected_branch(
+                snapshot_ref, train,
+                {"episodes": episodes, "branch_episode": branch_episode,
+                 "lost_agent": lost_agent, "disconnect_schedule": disconnect_schedule,
+                 "fed_method": fed_method},
             )
-            for key, value in zip(common, values):
-                common[key].append(value)
+        if lost_contact_phase != "normal" or snapshot_ref is not None:
+            raise ValueError("正常阶段不能传入内存状态，阶段只能为 normal 或 disconnected")
+        safe_training_jobs(1)
 
-        snapshot = {
-            "algorithm": model.checkpoint_state(),
-            "random": _random_state(env),
-            "results": common,
-            "agents": agents,
-            "horizon": len(train_idx),
-            "settings": {"episodes": episodes, "branch_episode": branch_episode,
-                         "lost_agent": lost_agent, "disconnect_schedule": disconnect_schedule,
-                         "fed_method": fed_method,
-                         "output_root": os.path.abspath(output_root)},
-        }
-    finally:
-        env.close()
-
-    result_root = os.path.join(output_root, "result", "lost_contact", fed_method)
-    os.makedirs(result_root, exist_ok=True)
-    np.savez(os.path.join(result_root, f"common_ep0_{branch_episode - 1}.npz"),
-             **{key: np.asarray(value) for key, value in common.items()},
-             episodes=np.arange(branch_episode), agents=np.asarray(agents))
-
-    # 大型 replay 通过共享内存传递，并在启动分支前检查可用内存。
-    shared, shared_size, safe_branch_workers = _share_training_snapshot(snapshot, branch_workers)
-    try:
-        if safe_branch_workers < branch_workers:
-            print(f"内存保护：{fed_method} 分支并发数降为 {safe_branch_workers}", flush=True)
-        del snapshot, model, common, train_series
-        # 父进程不再训练；释放共同阶段模型占用的 GPU 缓存供两个分支使用。
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        # Linux 默认 fork 会继承共同训练阶段的 CUDA 状态，子进程无法再次初始化。
-        with ProcessPoolExecutor(
-            max_workers=safe_branch_workers,
-            mp_context=get_context("spawn"),
-        ) as executor:
-            futures = [
-                executor.submit(
-                    _train_lost_contact_branch, branch, shared.name, shared_size,
-                    train, branch_cpu_threads,
+        presets = default_presets()
+        train_series, _, _, train_idx, _ = load_series_split(train_days=train, test_days=0)
+        if not train_idx:
+            raise ValueError("训练数据为空；请增加 train_days")
+        env = MultiBatteryCoordinator(train_series, **presets.env_kwargs)
+        try:
+            obs_dims, action_dims, max_actions, agents = infer_dims(env)
+            if lost_agent not in agents:
+                raise ValueError(f"未知失联园区: {lost_agent}")
+            lost_index = agents.index(lost_agent)
+            model = IDDPG(obs_dims, action_dims, max_actions, **presets.algo_kwargs)
+            common = {key: [] for key in ("train_rewards", "train_costs", "online", "weights")}
+            for episode in range(branch_episode):
+                values = _run_lost_contact_episode(
+                    model, env, agents, len(train_idx), presets.noise_warmup_steps,
+                    episode, fed_method, lost_index, False,
                 )
-                for branch in ("normal", "disconnected")
-            ]
-            return dict(future.result() for future in futures)
-    finally:
-        shared.close()
-        shared.unlink()
+                for key, value in zip(common, values):
+                    common[key].append(value)
 
-# The function signature is updated to accept fed_method
-def train_iddpg(episodes=1000, train=7, test=1, Federated=True, fed_method='DSFA'):
+            settings = {"episodes": episodes, "branch_episode": branch_episode,
+                        "lost_agent": lost_agent, "disconnect_schedule": disconnect_schedule,
+                        "fed_method": fed_method, "output_root": os.path.abspath(output_root)}
+            snapshot = {
+                "algorithm": model.checkpoint_state(),
+                "random": _random_state(env),
+                "results": common,
+                "agents": agents,
+                "horizon": len(train_idx),
+                "settings": settings,
+            }
+            result_root = os.path.join(output_root, "result", "lost_contact", fed_method)
+            os.makedirs(result_root, exist_ok=True)
+            np.savez(os.path.join(result_root, f"common_ep0_{branch_episode - 1}.npz"),
+                     **{key: np.asarray(value) for key, value in common.items()},
+                     episodes=np.arange(branch_episode), agents=np.asarray(agents))
+
+            # 正常分支继续训练前保存第 200 轮状态，断联阶段稍后从这里独立出发。
+            snapshot_payload = _serialize_training_snapshot(snapshot)
+            del snapshot
+            records = common
+            for episode in range(branch_episode, episodes):
+                values = _run_lost_contact_episode(
+                    model, env, agents, len(train_idx), presets.noise_warmup_steps,
+                    episode, fed_method, lost_index, False,
+                )
+                for key, value in zip(records, values):
+                    records[key].append(value)
+            _save_lost_contact_branch(model, records, agents, settings, "normal", lost_index)
+            return snapshot_payload
+        finally:
+            env.close()
+
     # --- Setup ---
     presets = default_presets()
     train_series, test_series, T, train_idx, test_idx = load_series_split(
