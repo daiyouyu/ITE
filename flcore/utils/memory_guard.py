@@ -6,9 +6,9 @@ import os
 from pathlib import Path
 
 
-GIB = 1024 ** 3
-RESERVED_MEMORY_BYTES = 2 * GIB
-MEMORY_PER_TRAINING_JOB_BYTES = 4 * GIB
+GIB = 1024 ** 1
+RESERVED_MEMORY_BYTES = 1 * GIB
+MEMORY_PER_TRAINING_JOB_BYTES = 2 * GIB
 
 
 def available_memory_bytes() -> int | None:
