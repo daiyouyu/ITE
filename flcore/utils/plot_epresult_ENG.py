@@ -103,8 +103,8 @@ def draw_result(rewards_record):
 
 if __name__ == '__main__':
     try:
-        rew1 = np.load("D:\\ITE\\result/20260404/result_arrays.npz")
-        rew = np.load("D:\\ITE\\result/20260329/result_arrays.npz")
+        rew1 = np.load("./result/20260404/result_arrays.npz")
+        rew = np.load("./result/20260329/result_arrays.npz")
         # 处理数据
         keys = ["maddpg", "DSFA", "iddpg", 'FedAvg']
         rew_data = {
