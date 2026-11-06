@@ -19,6 +19,8 @@ FONT_LIST = [
     "Noto Sans CJK SC",  # 思源黑体
 ]
 OUTPUT_RESULT_PATH = "D:\\ITE\\result\\fed_weights"
+SMOOTHING_WINDOW = 20
+HIGHLIGHT_IES_INDEX = 3
 
 # 获取系统中所有真实安装的字体名称
 installed_fonts = [f.name for f in font_manager.fontManager.ttflist]
@@ -36,6 +38,51 @@ if selected_font:
     print(f"[*] Matplotlib 中文配置成功，使用字体: {selected_font}")
 else:
     print("[!] 警告: 未在系统中检测到常见的中文字体，图表中文可能显示为方块。")
+
+
+def simple_moving_average(
+    data: np.ndarray,
+    window_size: int = SMOOTHING_WINDOW,
+) -> tuple[np.ndarray, np.ndarray]:
+    """返回滑动均值及窗口中心坐标；不足一个窗口时保留原始数据。"""
+    if window_size < 1:
+        raise ValueError("平滑窗口必须为正整数")
+    if len(data) < window_size:
+        return data, np.arange(len(data))
+    smoothed = np.convolve(data, np.ones(window_size) / window_size, mode='valid')
+    x_axis = np.arange(len(smoothed)) + (window_size - 1) / 2
+    return smoothed, x_axis
+
+
+def calculate_fluctuation_band(
+    values: np.ndarray,
+    window_size: int = SMOOTHING_WINDOW,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """返回波动带的横坐标、平滑中心值及局部残差标准差。
+
+    values 为一维原始权重，window_size 同时用于趋势平滑和残差统计。
+    先减去对齐到原始轮次的平滑趋势，再计算完整窗口内的总体标准差。
+    两端不外推；数据不足以构成完整残差窗口时返回三个空数组。
+    非有限数据、非一维输入或窗口小于 2 时抛出 ValueError。
+    """
+    values = np.asarray(values, dtype=float)
+    if values.ndim != 1 or not np.all(np.isfinite(values)):
+        raise ValueError("波动带要求有限的一维权重数据")
+    if window_size < 2:
+        raise ValueError("波动带统计窗口必须大于或等于 2")
+    if len(values) < window_size:
+        return np.array([]), np.array([]), np.array([])
+    trend, trend_x = simple_moving_average(values, window_size)
+    # 偶数窗口的趋势位于半整数轮次，插值对齐后再相减，避免错位引入虚假波动。
+    residual_x = np.arange(int(np.ceil(trend_x[0])), int(np.floor(trend_x[-1])) + 1)
+    if len(residual_x) < window_size:
+        return np.array([]), np.array([]), np.array([])
+    residuals = values[residual_x] - np.interp(residual_x, trend_x, trend) + 1.5
+    windows = np.lib.stride_tricks.sliding_window_view(residuals, window_size)
+    standard_deviation = windows.std(axis=1, ddof=0) 
+    band_x = residual_x[:len(standard_deviation)] + (window_size - 1) / 2
+    band_center = np.interp(band_x, trend_x, trend)
+    return band_x, band_center, standard_deviation
 
 
 def inspect_npy_file(file_path: str, ax: Axes, title: str) -> bool:
@@ -112,36 +159,38 @@ def inspect_npy_file(file_path: str, ax: Axes, title: str) -> bool:
                     ]
                     colors = [(r / 255., g / 255., b / 255.) for r, g, b in custom_colors_rgb_255]
 
-                    def simple_moving_average(data, window_size=20):
-                        if len(data) < window_size:
-                            return data, np.arange(len(data))
-                        smoothed = np.convolve(data, np.ones(window_size) / window_size, mode='valid')
-                        x_axis = np.arange(len(smoothed)) + (window_size - 1) // 2
-                        return smoothed, x_axis
-
                     if plot_data.ndim == 2:
                         num_lines = plot_data.shape[1]
                         for i in range(num_lines):
                             raw_data = plot_data[:, i]
                             current_color = colors[i % len(colors)]
-                            ax.plot(raw_data, color=current_color, alpha=0.3, linewidth=1.0)
+                            highlighted = i == HIGHLIGHT_IES_INDEX
+                            ax.plot(raw_data, color=current_color,
+                                    alpha=0.3, linewidth=1.0)
                             smoothed_data, smoothed_x = simple_moving_average(raw_data)
-                            ax.plot(smoothed_x, smoothed_data, color=current_color, label=f'IES{i + 1}',
-                                    linewidth=2.5)
-                        ax.legend(title="IES parks", frameon=True, shadow=True, loc='best', fontsize=10)
+                            if highlighted:
+                                band_x, band_center, deviation = calculate_fluctuation_band(raw_data)
+                                # 两图使用相同窗口和透明度，仅展示真实局部波动，不表示置信区间。
+                                ax.fill_between(band_x, band_center - deviation, band_center + deviation,
+                                                color=current_color, alpha=0.22,
+                                                linewidth=0, zorder=3)
+                            ax.plot(smoothed_x, smoothed_data, color=current_color, label=f'IES {i + 1}',
+                                    linewidth=3.5 if highlighted else 2.5,
+                                    zorder=5 if highlighted else 2)
 
                     else:
                         raw_data = plot_data
                         ax.plot(raw_data, color=colors[0], alpha=0.3, linewidth=1.0)
                         smoothed_data, smoothed_x = simple_moving_average(raw_data)
-                        ax.plot(smoothed_x, smoothed_data, color=colors[0], label='IES1', linewidth=2.5)
-                        ax.legend(title="IES parks", frameon=True, shadow=True)
+                        ax.plot(smoothed_x, smoothed_data, color=colors[0], label='IES 1', linewidth=2.5)
 
-                    ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
-                    ax.set_xlabel("Episode", fontsize=12)
-                    ax.set_ylabel(r"Self-Aggregation Weight, $W_{ii}$", fontsize=12)
-                    ax.set_ylim(0.3, 0.8)
-                    ax.set_xlim(left = 0.0)
+                    ax.set_title(title, fontsize=22, fontweight='bold', pad=18)
+                    ax.set_xlabel("Episode", fontsize=20, labelpad=10)
+                    ax.set_ylabel(r"$W_{ii}$",fontsize=20, labelpad=14)
+                    ax.tick_params(axis='both', labelsize=17)
+                    # 原下限 0.3 会截掉部分原始权重；两图统一范围以便直接比较。
+                    ax.set_ylim(0.25, 0.8)
+                    ax.set_xlim(0, max(len(plot_data) - 1, 1))
                     ax.spines['top'].set_visible(False)
                     ax.spines['right'].set_visible(False)
                     return True
@@ -174,14 +223,20 @@ if __name__ == "__main__":
     test_file = 'D:\\ITE\\result\\20260404\\fed_weights_DSFA_194147.npy'
     comparsion_file = 'D:\\ITE\\result\\20261005\\fed_weights_AllDSFA_004613.npy'
 
-    fig, axes = plt.subplots(1, 2, figsize=(20, 7), sharey=True)
-    test_ok = inspect_npy_file(test_file, axes[0], "(a) DSFA with Local Critics")
+    fig, axes = plt.subplots(1, 2, figsize=(20, 8.5), sharey=True)
+    test_ok = inspect_npy_file(test_file, axes[0], "(a) DSFA: Actor-only aggregation")
     comparison_ok = inspect_npy_file(
-        comparsion_file, axes[1], "(b) DSFA with Actor–Critic Aggregation"
+        comparsion_file, axes[1], "(b) DSFA: Actor–Critic aggregation"
     )
 
     if test_ok and comparison_ok:
-        fig.tight_layout()
+        fig.subplots_adjust(left=0.09, right=0.98, top=0.88, bottom=0.28, wspace=0.22)
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc='lower center', ncol=len(labels),
+                   bbox_to_anchor=(0.5, 0.10), frameon=False, fontsize=24)
+        fig.text(0.5, 0.095,
+                 r"$W_{ii}$: contribution of IES $i$'s own model to its aggregated model; higher values mean more local-model retention.",
+                 ha='center', va='center', fontsize=24)
         os.makedirs(OUTPUT_RESULT_PATH, exist_ok=True)
         output_path = os.path.join(OUTPUT_RESULT_PATH, "fed_weights_DSFA_comparison_ENG.png")
         fig.savefig(output_path, dpi=600, bbox_inches="tight")
