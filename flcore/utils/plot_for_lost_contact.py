@@ -8,14 +8,31 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import font_manager
+from matplotlib.ticker import FuncFormatter
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RESULT_DIR = PROJECT_ROOT / "result" / "lost_contact"
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "result" / "lost_contact" / "figure"
+REWARD_SCALE = 100
 ALGORITHM_COLORS = {"DSFA": "#1768A6", "FedAvg": "#D47A28"}
 BRANCH_STYLES = {"normal": "-", "disconnected": "--"}
 BRANCH_LABELS = {"normal": "正常", "disconnected": "断联"}
+REWARD_STYLES = {
+    ("DSFA", "normal"): {"color": "#1D4ED8", "linestyle": "-", "marker": None},
+    ("DSFA", "disconnected"): {"color": "#008F7A", "linestyle": (0, (6, 2)), "marker": "o"},
+    ("FedAvg", "normal"): {"color": "#C06000", "linestyle": "-", "marker": None},
+    ("FedAvg", "disconnected"): {"color": "#7C3AED", "linestyle": (0, (4, 2, 1, 2)), "marker": "^"},
+}
+
+
+def scientific_reward_formatter(value: float, _position: int) -> str:
+    """按既有英文奖励图的格式，将纵轴刻度显示为科学计数法。"""
+    if value == 0:
+        return "0"
+    exponent = int(np.floor(np.log10(abs(value))))
+    coefficient = value / (10 ** exponent)
+    return rf"{coefficient:.2f}$\times 10^{{{exponent}}}$"
 
 
 def configure_chinese_font() -> None:
@@ -163,25 +180,46 @@ def plot_rewards(
     results: dict[tuple[str, str], dict[str, np.ndarray]],
     output_dir: Path,
     window: int,
+    *,
+    focus_start: int | None = None,
 ) -> Path:
-    """为每个园区绘制四条分支奖励曲线，颜色区分算法、线型区分分支。"""
+    """用独立颜色和线型绘制各园区奖励，放大视图按原始值调整纵轴。"""
     first = next(iter(results.values()))
     agents = first["agents"]
     fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True)
     for index, agent in enumerate(agents):
         ax = axes.flat[index]
         decorate_axis(ax, first)
+        visible_values = []
         for (algorithm, branch), record in results.items():
             x = record["episodes"]
-            y = record["train_rewards"][:, index]
-            color = ALGORITHM_COLORS[algorithm]
+            y = record["train_rewards"][:, index] * REWARD_SCALE
+            style = REWARD_STYLES[(algorithm, branch)]
+            # 两个分支在共同训练阶段完全相同，只绘制正常分支以免重叠遮挡。
+            plot_mask = x >= int(record["branch_episode"]) if branch == "disconnected" else np.ones_like(x, dtype=bool)
+            plot_x = x[plot_mask]
+            plot_y = y[plot_mask]
             if window > 1:
-                ax.plot(x, y, color=color, linewidth=0.55, alpha=0.11)
-            ax.plot(x, branch_rolling_mean(y, window, branch, record), color=color,
-                    linestyle=BRANCH_STYLES[branch], linewidth=1.8,
+                ax.plot(plot_x, plot_y, color=style["color"], linewidth=0.5, alpha=0.12)
+            plotted_values = branch_rolling_mean(y, window, branch, record)[plot_mask]
+            ax.plot(plot_x, plotted_values, color=style["color"],
+                    linestyle=style["linestyle"], marker=style["marker"],
+                    markevery=35, markersize=3, markerfacecolor="white",
+                    markeredgewidth=0.9, linewidth=1.25,
                     label=f"{algorithm} · {BRANCH_LABELS[branch]}")
+            if focus_start is not None:
+                visible_values.append(y[x >= focus_start])
+        if focus_start is not None:
+            ax.set_xlim(focus_start, int(first["episodes"][-1]))
+            finite_values = np.concatenate(visible_values)
+            finite_values = finite_values[np.isfinite(finite_values)]
+            if finite_values.size:
+                lower, upper = float(finite_values.min()), float(finite_values.max())
+                padding = max((upper - lower) * 0.08, 0.5 * REWARD_SCALE)
+                ax.set_ylim(lower - padding, upper + padding)
+        ax.yaxis.set_major_formatter(FuncFormatter(scientific_reward_formatter))
         ax.set_title(f"园区 {index + 1} ({agent})")
-        ax.set_ylabel("训练奖励 / 24 小时")
+        ax.set_ylabel("训练奖励（×100）/ 24 小时")
         ax.set_xlabel("Episode")
     for ax in axes.flat[len(agents):]:
         ax.set_visible(False)
@@ -189,8 +227,110 @@ def plot_rewards(
     fig.subplots_adjust(top=0.86, bottom=0.08, hspace=0.26, wspace=0.15)
     fig.legend(handles, labels, loc="upper center", ncol=len(labels),
                bbox_to_anchor=(0.5, 0.94), frameon=False)
-    fig.suptitle(f"正常与断联训练奖励对比（{window} episode 滑动均值）", y=0.99, fontsize=16)
-    output_path = output_dir / "train_rewards.png"
+    value_label = "逐 episode 原始值" if window == 1 else f"{window} episode 滑动均值"
+    view_label = "，分支阶段放大" if focus_start is not None else ""
+    fig.suptitle(f"正常与断联训练奖励对比（{value_label}{view_label}）", y=0.99, fontsize=16)
+    filename = "train_rewards_detail.png" if focus_start is not None else "train_rewards.png"
+    output_path = output_dir / filename
+    fig.savefig(output_path, dpi=220)
+    plt.close(fig)
+    return output_path
+
+
+def plot_reward_transitions(
+    results: dict[tuple[str, str], dict[str, np.ndarray]],
+    output_dir: Path,
+    radius: int = 25,
+) -> Path:
+    """放大首次重连和第二次失联前后的逐轮奖励，不对数据进行平滑。"""
+    first = next(iter(results.values()))
+    schedule = first["disconnect_schedule"]
+    if len(schedule) < 2:
+        raise ValueError("局部放大图需要两段失联区间")
+    transitions = (
+        (int(schedule[0][1]), "First reconnection"),
+        (int(schedule[1][0]), "Second disconnection"),
+    )
+    episodes = first["episodes"]
+    selected_agent_indices = (0, 2)
+    branch_labels = {"normal": "Normal", "disconnected": "Disconnected"}
+    fig, axes = plt.subplots(len(selected_agent_indices), 2, figsize=(12, 6.8))
+    for row, agent_index in enumerate(selected_agent_indices):
+        for column, (center, phase_name) in enumerate(transitions):
+            ax = axes[row, column]
+            start = max(int(episodes[0]), center - radius)
+            end = min(int(episodes[-1]), center + radius)
+            decorate_axis(ax, first)
+            ax.axvline(center, color="#475569", linestyle=":", linewidth=1.2)
+            ax.set_xlim(start, end)
+            visible_values = []
+            for (algorithm, branch), record in results.items():
+                values = record["train_rewards"][:, agent_index] * REWARD_SCALE
+                mask = (episodes >= start) & (episodes <= end)
+                style = REWARD_STYLES[(algorithm, branch)]
+                plotted_values = values[mask]
+                visible_values.append(plotted_values)
+                ax.plot(episodes[mask], plotted_values,
+                        color=style["color"], linestyle=style["linestyle"],
+                        marker=style["marker"], markevery=5, markersize=3.5,
+                        markerfacecolor="white", markeredgewidth=0.9,
+                        linewidth=1.4, label=f"{algorithm} · {branch_labels[branch]}")
+            finite_values = np.concatenate(visible_values)
+            finite_values = finite_values[np.isfinite(finite_values)]
+            if finite_values.size:
+                lower, upper = float(finite_values.min()), float(finite_values.max())
+                padding = max((upper - lower) * 0.08, 0.3 * REWARD_SCALE)
+                ax.set_ylim(lower - padding, upper + padding)
+            ax.yaxis.set_major_formatter(FuncFormatter(scientific_reward_formatter))
+            ax.set_title(f"IES {agent_index + 1}: {phase_name} (episode {center})", fontsize=10)
+            ax.set_ylabel("Training reward per 24 h", fontsize=9)
+            ax.set_xlabel("Episode", fontsize=9)
+            ax.tick_params(axis="both", labelsize=8)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.subplots_adjust(left=0.12, right=0.97, top=0.80, bottom=0.10,
+                        hspace=0.58, wspace=0.38)
+    fig.legend(handles, labels, loc="upper center", ncol=len(labels),
+               bbox_to_anchor=(0.5, 0.91), frameon=False, fontsize=9)
+    fig.suptitle("Training Reward Around Participation Changes", y=0.98, fontsize=12)
+    output_path = output_dir / "train_rewards_transitions.png"
+    fig.savefig(output_path, dpi=220)
+    plt.close(fig)
+    return output_path
+
+
+def plot_reward_gap(
+    results: dict[tuple[str, str], dict[str, np.ndarray]],
+    output_dir: Path,
+) -> Path:
+    """绘制断联与正常分支的逐轮奖励差值，正值表示断联分支奖励更高。"""
+    first = next(iter(results.values()))
+    agents = first["agents"]
+    episodes = first["episodes"]
+    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True)
+    for index in range(len(agents)):
+        ax = axes.flat[index]
+        decorate_axis(ax, first)
+        ax.set_xlim(200, int(episodes[-1]))
+        ax.axhline(0, color="#475569", linewidth=0.9, zorder=1)
+        for algorithm, color in ALGORITHM_COLORS.items():
+            if (algorithm, "normal") not in results:
+                continue
+            normal = results[(algorithm, "normal")]["train_rewards"][:, index]
+            disconnected = results[(algorithm, "disconnected")]["train_rewards"][:, index]
+            ax.plot(episodes, (disconnected - normal) * REWARD_SCALE,
+                    color=color, linewidth=0.9,
+                    alpha=0.85, label=algorithm, zorder=2)
+        ax.yaxis.set_major_formatter(FuncFormatter(scientific_reward_formatter))
+        ax.set_title(f"IES {index + 1}")
+        ax.set_ylabel("Reward difference (disconnected − normal)")
+        ax.set_xlabel("Episode")
+    handles, labels = axes.flat[0].get_legend_handles_labels()
+    fig.subplots_adjust(left=0.10, right=0.97, top=0.84, bottom=0.09,
+                        hspace=0.42, wspace=0.40)
+    fig.legend(handles, labels, loc="upper center", ncol=len(labels),
+               bbox_to_anchor=(0.5, 0.94), frameon=False)
+    fig.suptitle("Effect of Disconnection on Training Reward", y=0.99, fontsize=16)
+    output_path = output_dir / "train_reward_gap.png"
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
     return output_path
@@ -267,16 +407,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="绘制园区断联实验结果")
     parser.add_argument("--result-dir", type=Path, default=DEFAULT_RESULT_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
-    parser.add_argument("--window", type=int, default=25,
+    parser.add_argument("--window", type=int, default=1,
                         help="滑动均值窗口大小；设为 1 绘制原始曲线")
+    parser.add_argument("--transition-radius", type=int, default=25,
+                        help="400 和 600 附近局部放大图的左右 episode 数")
     args = parser.parse_args()
     if args.window < 1:
         parser.error("--window 必须大于或等于 1")
+    if args.transition_radius < 1:
+        parser.error("--transition-radius 必须大于或等于 1")
     results = load_results(args.result_dir)
     output_dir = args.output_dir or args.result_dir / "figure"
     output_dir.mkdir(parents=True, exist_ok=True)
     configure_chinese_font()
-    for plot_function in (plot_rewards, plot_lost_agent_costs, plot_lost_agent_weights):
+    print(f"已保存: {plot_rewards(results, output_dir, args.window)}")
+    focus_start = max(int(next(iter(results.values()))["branch_episode"]) - 20, 0)
+    print(f"已保存: {plot_rewards(results, output_dir, 1, focus_start=focus_start)}")
+    print(f"已保存: {plot_reward_transitions(results, output_dir, args.transition_radius)}")
+    print(f"已保存: {plot_reward_gap(results, output_dir)}")
+    for plot_function in (plot_lost_agent_costs, plot_lost_agent_weights):
         print(f"已保存: {plot_function(results, output_dir, args.window)}")
 
 
