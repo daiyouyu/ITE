@@ -8,6 +8,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import font_manager
+from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter
 
 
@@ -302,34 +303,87 @@ def plot_reward_gap(
     results: dict[tuple[str, str], dict[str, np.ndarray]],
     output_dir: Path,
 ) -> Path:
-    """绘制断联与正常分支的逐轮奖励差值，正值表示断联分支奖励更高。"""
+    """绘制断联引起的奖励变化，并量取首次重连轮次的绝对偏差。
+
+    results 为正常和断联分支结果，output_dir 为已存在的输出目录。
+    返回图片路径；正值表示断联奖励更高，量取沿用曲线的 ×100 尺度。
+    首次重连轮次尚未记录或奖励非有限值时，不添加对应量取标注。
+    """
     first = next(iter(results.values()))
     agents = first["agents"]
     episodes = first["episodes"]
+    disconnect_start, measurement_episode = map(int, first["disconnect_schedule"][0])
+    measurement_mask = episodes == measurement_episode
     fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True)
     for index in range(len(agents)):
         ax = axes.flat[index]
         decorate_axis(ax, first)
-        ax.set_xlim(200, int(episodes[-1]))
+        ax.set_xlim(disconnect_start, int(episodes[-1]))
         ax.axhline(0, color="#475569", linewidth=0.9, zorder=1)
-        for algorithm, color in ALGORITHM_COLORS.items():
+        measurement_labels = []
+        plotted_gaps = []
+        for algorithm_index, (algorithm, color) in enumerate(ALGORITHM_COLORS.items()):
             if (algorithm, "normal") not in results:
                 continue
             normal = results[(algorithm, "normal")]["train_rewards"][:, index]
             disconnected = results[(algorithm, "disconnected")]["train_rewards"][:, index]
-            ax.plot(episodes, (disconnected - normal) * REWARD_SCALE,
+            reward_gap = (disconnected - normal) * REWARD_SCALE
+            plotted_gaps.append(reward_gap)
+            ax.plot(episodes, reward_gap,
                     color=color, linewidth=0.9,
                     alpha=0.85, label=algorithm, zorder=2)
+            valid_indices = np.flatnonzero(measurement_mask & np.isfinite(reward_gap))
+            if valid_indices.size:
+                # 两种算法量取同一轮次，相邻摆放箭头以免互相遮挡。
+                measurement_index = valid_indices[0]
+                measurement_value = float(reward_gap[measurement_index])
+                measure_x = measurement_episode + (-30 if algorithm_index == 0 else 30)
+                ax.hlines(measurement_value, measure_x, episodes[measurement_index],
+                          color=color, linestyle="--", linewidth=2.6, zorder=40)
+                ax.hlines(0, measure_x - 5, measure_x + 5,
+                          color=color, linewidth=2.0, zorder=4)
+                ax.annotate("", xy=(measure_x, measurement_value), xytext=(measure_x, 0),
+                            arrowprops={"arrowstyle": "<->", "color": color,
+                                        "lw": 2.4, "mutation_scale": 16,
+                                        "shrinkA": 0, "shrinkB": 0},
+                            zorder=5)
+                ax.plot(episodes[measurement_index], measurement_value, "o", color=color,
+                        markersize=6, markeredgewidth=1.6, markerfacecolor="white", zorder=5)
+                measurement_labels.append((f"{algorithm}: {abs(measurement_value):.2f}", color))
+        if measurement_labels:
+            # 将数值放在量取位置右侧、所有曲线下方的空白处，而非用白框覆盖曲线。
+            gap_values = np.asarray(plotted_gaps)
+            visible_values = gap_values[:, episodes >= disconnect_start]
+            finite_values = visible_values[np.isfinite(visible_values)]
+            lower, upper = float(finite_values.min()), float(finite_values.max())
+            span = max(upper - lower, 1.0)
+            label_x = measurement_episode + 55
+            label_region = gap_values[:, (episodes >= label_x) & (episodes <= label_x + 300)]
+            finite_region = label_region[np.isfinite(label_region)]
+            label_y = (float(finite_region.min()) if finite_region.size else lower) - 0.10 * span
+            ax.text(label_x, label_y,
+                    f"|ΔR| at episode {measurement_episode}",
+                    ha="left", va="top", fontsize=16)
+            for label_index, (label, color) in enumerate(measurement_labels):
+                ax.annotate(label, xy=(label_x, label_y),
+                            xytext=(0, -19 * (label_index + 1)), textcoords="offset points",
+                            ha="left", va="top", fontsize=16, color=color)
+            ax.set_ylim(min(lower - 0.08 * span, label_y - 0.40 * span),
+                        upper + 0.10 * span)
         ax.yaxis.set_major_formatter(FuncFormatter(scientific_reward_formatter))
-        ax.set_title(f"IES {index + 1}")
-        ax.set_ylabel("Reward difference (disconnected − normal)")
-        ax.set_xlabel("Episode")
+        ax.set_title(f"IES {index + 1}", fontsize=22)
+        ax.set_ylabel(r"$\Delta R$", fontsize=18, labelpad=12)
+        ax.set_xlabel("Episode", fontsize=14)
+        ax.tick_params(axis="both", labelsize=12)
     handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.subplots_adjust(left=0.10, right=0.97, top=0.84, bottom=0.09,
-                        hspace=0.42, wspace=0.40)
-    fig.legend(handles, labels, loc="upper center", ncol=len(labels),
-               bbox_to_anchor=(0.5, 0.94), frameon=False)
-    fig.suptitle("Effect of Disconnection on Training Reward", y=0.99, fontsize=16)
+    fig.subplots_adjust(left=0.10, right=0.98, top=0.95, bottom=0.15,
+                        hspace=0.32, wspace=0.32)
+    # 将公式作为无图形的图例项，与两种算法的线段说明保持在同一行。
+    handles.append(Line2D([], [], linestyle="none"))
+    labels.append("ΔR = R(disconnected) − R(normal)")
+    fig.legend(handles, labels, loc="lower center", ncol=len(labels),
+               bbox_to_anchor=(0.5, 0.025), frameon=False, fontsize=20,
+               columnspacing=1.5)
     output_path = output_dir / "train_reward_gap.png"
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
