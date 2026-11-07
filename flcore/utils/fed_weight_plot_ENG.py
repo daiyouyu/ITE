@@ -226,7 +226,7 @@ if __name__ == "__main__":
     fig, axes = plt.subplots(1, 2, figsize=(20, 8.5), sharey=True)
     test_ok = inspect_npy_file(test_file, axes[0], "(a) DSFA: Actor-only aggregation")
     comparison_ok = inspect_npy_file(
-        comparsion_file, axes[1], "(b) DSFA: Actor–Critic aggregation"
+        comparsion_file, axes[1], "(b) AllDSFA: Actor–Critic aggregation"
     )
 
     if test_ok and comparison_ok:
