@@ -8,7 +8,9 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib import font_manager
+from matplotlib.figure import SubFigure
 from matplotlib.lines import Line2D
+from matplotlib.patches import ConnectionPatch, Rectangle
 from matplotlib.ticker import FuncFormatter, ScalarFormatter
 
 
@@ -254,11 +256,14 @@ def plot_reward_transitions(
     results: dict[tuple[str, str], dict[str, np.ndarray]],
     output_dir: Path,
     radius: int = 25,
+    *,
+    panel: SubFigure | None = None,
 ) -> Path:
     """放大首次重连和第二次失联前后的逐轮奖励，不对数据进行平滑。
 
     results 为正常和断联分支结果，output_dir 为输出目录，radius 为前后轮数。
     返回图片路径；分支线型表示通信实验条件，阴影表示实际断联时段。
+    panel 非空时绘制到组合图面板，不单独保存；返回原单图路径。
     仅在 episode 400 量取间歇通信分支相对 episode 399 的奖励突变量绝对值。
     """
     first = next(iter(results.values()))
@@ -272,7 +277,8 @@ def plot_reward_transitions(
     episodes = first["episodes"]
     selected_agent_indices = (0, 2)
     branch_labels = {"normal": "Normal", "disconnected": "Intermittent"}
-    fig, axes = plt.subplots(len(selected_agent_indices), 2, figsize=(18, 11))
+    fig = panel if panel is not None else plt.figure(figsize=(18, 11))
+    axes = fig.subplots(len(selected_agent_indices), 2)
     for row, agent_index in enumerate(selected_agent_indices):
         for column, (center, phase_name) in enumerate(transitions):
             ax = axes[row, column]
@@ -341,9 +347,9 @@ def plot_reward_transitions(
                     ax.set_ylim(min(lower - padding, label_y - 0.48 * span), upper + padding)
             configure_scientific_axis(ax, exponent=4, fontsize=14)
             ax.set_title(f"IES {agent_index + 1}: {phase_name}\nEpisode {center}",
-                         fontsize=20, pad=22)
+                         fontsize=26, pad=12)
             ax.set_ylabel(r"$R$", fontsize=20, labelpad=12)
-            ax.set_xlabel("Episode", fontsize=16, labelpad=8)
+            ax.set_xlabel("Episode", fontsize=20, labelpad=8)
             ax.tick_params(axis="both", labelsize=14)
     handles, labels = axes[0, 0].get_legend_handles_labels()
     fig.subplots_adjust(left=0.08, right=0.98, top=0.88, bottom=0.22,
@@ -354,19 +360,23 @@ def plot_reward_transitions(
     fig.text(0.5, 0.065, "R: training reward per 24 h; Normal / Intermittent: communication conditions.",
              ha="center", va="center", fontsize=20)
     output_path = output_dir / "train_rewards_transitions.png"
-    fig.savefig(output_path, dpi=220)
-    plt.close(fig)
+    if panel is None:
+        fig.savefig(output_path, dpi=220)
+        plt.close(fig)
     return output_path
 
 
 def plot_reward_gap(
     results: dict[tuple[str, str], dict[str, np.ndarray]],
     output_dir: Path,
+    *,
+    panel: SubFigure | None = None,
 ) -> Path:
     """绘制断联引起的奖励变化，并量取首次重连轮次的绝对偏差。
 
     results 为正常和断联分支结果，output_dir 为已存在的输出目录。
     返回图片路径；正值表示断联奖励更高，量取沿用曲线的 ×100 尺度。
+    panel 非空时绘制到组合图面板，不单独保存；返回原单图路径。
     首次重连轮次尚未记录或奖励非有限值时，不添加对应量取标注。
     """
     first = next(iter(results.values()))
@@ -374,7 +384,8 @@ def plot_reward_gap(
     episodes = first["episodes"]
     disconnect_start, measurement_episode = map(int, first["disconnect_schedule"][0])
     measurement_mask = episodes == measurement_episode
-    fig, axes = plt.subplots(2, 2, figsize=(18, 11), sharex=True)
+    fig = panel if panel is not None else plt.figure(figsize=(18, 11))
+    axes = fig.subplots(2, 2, sharex=True)
     for index in range(len(agents)):
         ax = axes.flat[index]
         decorate_axis(ax, first)
@@ -432,9 +443,9 @@ def plot_reward_gap(
             ax.set_ylim(min(lower - 0.08 * span, label_y - 0.70 * span),
                         upper + 0.10 * span)
         configure_scientific_axis(ax, exponent=2, fontsize=12)
-        ax.set_title(f"IES {index + 1}", fontsize=22, pad=18)
+        ax.set_title(f"IES {index + 1}", fontsize=22)
         ax.set_ylabel(r"$\Delta R$", fontsize=22, labelpad=12)
-        ax.set_xlabel("Episode", fontsize=14)
+        ax.set_xlabel("Episode", fontsize=20)
         ax.tick_params(axis="both", labelsize=12)
     handles, labels = axes.flat[0].get_legend_handles_labels()
     fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.16,
@@ -446,6 +457,160 @@ def plot_reward_gap(
                bbox_to_anchor=(0.5, 0.025), frameon=False, fontsize=20,
                columnspacing=1.5)
     output_path = output_dir / "train_reward_gap.png"
+    if panel is None:
+        fig.savefig(output_path, dpi=220)
+        plt.close(fig)
+    return output_path
+
+
+def plot_reward_comparison(
+    results: dict[tuple[str, str], dict[str, np.ndarray]],
+    output_dir: Path,
+    radius: int = 25,
+) -> Path:
+    """绘制奖励差值，以及 IES1、IES3 的主图与首次重连放大图。
+
+    results 为实验结果，output_dir 为输出目录，radius 为放大窗口半径。
+    返回组合图路径；主图显示 episode 100 到 500，右侧放大图标注 episode 400 的奖励变化。
+    """
+    fig = plt.figure(figsize=(36, 20))
+    panels = fig.subfigures(1, 2, wspace=0)
+    plot_reward_gap(results, output_dir, panel=panels[0])
+    first = next(iter(results.values()))
+    episodes = first["episodes"]
+    reconnection = int(first["disconnect_schedule"][0][1])
+    visible = (episodes >= 100) & (episodes <= 500)
+    zoom_visible = (episodes >= reconnection - radius) & (episodes <= reconnection + radius)
+    axes = panels[1].subplots(2, 2, gridspec_kw={"width_ratios": [1.8, 1]})
+    branch_labels = {"normal": "Normal", "disconnected": "Intermittent"}
+    for (ax, zoom_ax), agent_index in zip(axes, (0, 2)):
+        decorate_axis(ax, first)
+        decorate_axis(zoom_ax, first)
+        ax.set_xlim(100, 500)
+        zoom_ax.set_xlim(reconnection - radius, reconnection + radius)
+        ax.axvline(reconnection, color="#475569", linestyle=":", linewidth=1.8)
+        zoom_ax.axvline(reconnection, color="#475569", linestyle=":", linewidth=1.8)
+        all_values = []
+        zoom_values = []
+        changes = []
+        for (algorithm, branch), record in results.items():
+            values = record["train_rewards"][:, agent_index] * REWARD_SCALE
+            all_values.append(values[visible])
+            zoom_values.append(values[zoom_visible])
+            ax.plot(episodes[visible], values[visible],
+                    color=ALGORITHM_COLORS[algorithm], linestyle=BRANCH_STYLES[branch],
+                    linewidth=1.4, label=f"{algorithm} · {branch_labels[branch]}")
+            zoom_ax.plot(episodes[zoom_visible], values[zoom_visible],
+                         color=ALGORITHM_COLORS[algorithm], linestyle=BRANCH_STYLES[branch],
+                         linewidth=1.8)
+            if branch == "disconnected":
+                indices = np.flatnonzero((episodes == reconnection - 1) | (episodes == reconnection))
+                if len(indices) == 2 and np.all(np.isfinite(values[indices])):
+                    previous_value, current_value = values[indices]
+                    changes.append((algorithm, abs(float(current_value - previous_value))))
+                    measure_x = reconnection + radius * (0.20 if algorithm == "DSFA" else 0.42)
+                    measure_color = ALGORITHM_COLORS[algorithm]
+                    zoom_ax.hlines(previous_value, reconnection - 1, measure_x,
+                                   color=measure_color, linestyle="--", linewidth=2.0, zorder=6)
+                    zoom_ax.hlines(current_value, reconnection, measure_x,
+                                   color=measure_color, linestyle="--", linewidth=2.0, zorder=6)
+                    zoom_ax.annotate(
+                        "", xy=(measure_x, current_value), xytext=(measure_x, previous_value),
+                        arrowprops={"arrowstyle": "<->", "color": measure_color,
+                                    "lw": 2.5, "mutation_scale": 18,
+                                    "shrinkA": 0, "shrinkB": 0},
+                        zorder=7,
+                    )
+                    zoom_ax.plot(episodes[indices], values[indices], "o",
+                                 color=ALGORITHM_COLORS[algorithm], markerfacecolor="white",
+                                 markersize=5, zorder=5)
+        finite_values = np.concatenate(all_values)
+        finite_values = finite_values[np.isfinite(finite_values)]
+        if finite_values.size:
+            # 用分位数确定主图范围，避免 episode 400 的单轮突变压缩其余折线。
+            lower, upper = np.percentile(finite_values, [2, 98])
+            padding = max((upper - lower) * 0.06, 0.1 * REWARD_SCALE)*10
+            main_bottom, main_top = lower - padding, upper + padding
+            ax.set_ylim(main_bottom, main_top)
+            for algorithm in ALGORITHM_COLORS:
+                values = results[(algorithm, "disconnected")]["train_rewards"][:, agent_index] * REWARD_SCALE
+                event_indices = np.flatnonzero(episodes == reconnection)
+                if event_indices.size and values[event_indices[0]] < main_bottom:
+                    # 贴近下边界的倒三角表示主图已截断的突变，精确值见右侧放大图。
+                    ax.plot(reconnection, main_bottom + 0.025 * (main_top - main_bottom),
+                            marker="v", color=ALGORITHM_COLORS[algorithm], markersize=9,
+                            linestyle="none", zorder=8)
+        # 放大图使用独立纵轴，保留重连突变的可读性。
+        zoom_finite = np.concatenate(zoom_values)
+        zoom_finite = zoom_finite[np.isfinite(zoom_finite)]
+        if zoom_finite.size:
+            zoom_lower, zoom_upper = float(zoom_finite.min()), float(zoom_finite.max())
+            zoom_span = max(zoom_upper - zoom_lower, 1.0)
+            zoom_ax.set_ylim(zoom_lower - 0.38 * zoom_span, zoom_upper + 0.12 * zoom_span)
+            # 放大框限定在主图内，避免独立纵轴的范围使自动框越过坐标轴。
+            main_lower, main_upper = ax.get_ylim()
+            box_lower = main_lower - 0.06 * (main_upper - main_lower)
+            box_upper = main_lower + 0.88 * (main_upper - main_lower)
+            box_right = reconnection + radius
+            ax.add_patch(Rectangle(
+                (reconnection - radius, box_lower), 2 * radius, box_upper - box_lower,
+                fill=False, edgecolor="#64748B", linewidth=2.0, linestyle="--",
+                clip_on=False, zorder=6,
+            ))
+            for source_y, target_y in ((box_upper, zoom_ax.get_ylim()[1]),
+                                       (box_lower, zoom_ax.get_ylim()[0])):
+                connector = ConnectionPatch(
+                    xyA=(box_right, source_y), coordsA="data", axesA=ax,
+                    xyB=(reconnection - radius, target_y), coordsB="data", axesB=zoom_ax,
+                    color="#64748B", linewidth=2.0, linestyle="--", clip_on=False,
+                )
+                panels[1].add_artist(connector)
+            ax.set_ylim(main_bottom, main_top)
+        zoom_ax.text(0.50, 0.95, "First reconnection", transform=zoom_ax.transAxes,
+                     ha="center", va="top", fontsize=16)
+        if changes:
+            zoom_ax.text(0.06, 0.26, f"|R({reconnection}) − R({reconnection - 1})|",
+                         transform=zoom_ax.transAxes, ha="left", va="bottom", fontsize=15)
+            for change_index, (algorithm, change) in enumerate(changes):
+                zoom_ax.text(0.06, 0.16 - 0.10 * change_index,
+                             f"{algorithm}: {change:.2f}", transform=zoom_ax.transAxes,
+                             ha="left", va="bottom", fontsize=15,
+                             color=ALGORITHM_COLORS[algorithm])
+        configure_scientific_axis(ax, exponent=4, fontsize=14)
+        configure_scientific_axis(zoom_ax, exponent=4, fontsize=14)
+        ax.set_title(f"IES{agent_index + 1}", fontsize=28, pad=18)
+        ax.set_ylabel(r"$R$", fontsize=20, labelpad=12)
+        ax.set_xlabel("Episode", fontsize=16)
+        zoom_ax.set_xlabel("Episode", fontsize=16)
+        ax.tick_params(axis="both", labelsize=14)
+        zoom_ax.tick_params(axis="both", labelsize=14)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    panels[1].legend(handles, labels, loc="lower center", ncol=2,
+                     bbox_to_anchor=(0.5, 0.09), frameon=False, fontsize=18)
+    for panel, label in zip(panels, ("(a)", "(b)")):
+        # 两组使用相同边距和行间距，避免原单图留白不同导致绘图区比例失衡。
+        panel.subplots_adjust(left=0.09, right=0.98, top=0.94, bottom=0.18,
+                              hspace=0.42, wspace=0.28)
+        for ax in panel.axes:
+            ax.title.set_fontsize(48)
+            ax.xaxis.label.set_fontsize(24)
+            ax.yaxis.label.set_fontsize(28)
+            ax.tick_params(axis="both", labelsize=22)
+            ax.yaxis.get_offset_text().set_fontsize(22)
+            for annotation in ax.texts:
+                annotation.set_fontsize(28)
+        for legend_text in panel.legends[0].get_texts():
+            legend_text.set_fontsize(legend_text.get_fontsize() + 14)
+        panel.legends[0].set_bbox_to_anchor((0.5, 0.065))
+        panel.text(0.5, 0.018, label, ha="center", va="center", fontsize=40)
+    # 左右两组标题使用相同的字号和间距。
+    for index, ax in enumerate(panels[0].axes):
+        ax.set_title(f"IES {index + 1}", fontsize=48, pad=18)
+    fig.add_artist(Line2D(
+        [0.5, 0.5], [0.08, 0.94], transform=fig.transFigure,
+        color="#CBD5E1", linewidth=1.5, linestyle=(0, (5, 5)), zorder=2,
+    ))
+    output_path = output_dir / "train_reward_comparison.png"
     fig.savefig(output_path, dpi=220)
     plt.close(fig)
     return output_path
@@ -518,7 +683,7 @@ def plot_lost_agent_weights(
 
 
 def main() -> None:
-    """从命令行加载断联实验结果并保存三张折线图。"""
+    """从命令行加载断联实验结果并保存各项曲线和论文组合图。"""
     parser = argparse.ArgumentParser(description="绘制园区断联实验结果")
     parser.add_argument("--result-dir", type=Path, default=DEFAULT_RESULT_DIR)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
@@ -540,6 +705,7 @@ def main() -> None:
     print(f"已保存: {plot_rewards(results, output_dir, 1, focus_start=focus_start)}")
     print(f"已保存: {plot_reward_transitions(results, output_dir, args.transition_radius)}")
     print(f"已保存: {plot_reward_gap(results, output_dir)}")
+    print(f"已保存: {plot_reward_comparison(results, output_dir, args.transition_radius)}")
     for plot_function in (plot_lost_agent_costs, plot_lost_agent_weights):
         print(f"已保存: {plot_function(results, output_dir, args.window)}")
 
