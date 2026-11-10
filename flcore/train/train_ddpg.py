@@ -129,7 +129,7 @@ def train_ddpg(
 
     每个园区仅用自身观测调用共享主干及专属头部生成动作。
     中心 Critic 用奖励总和训练，仅更新共享主干；园区 Critic 用自身奖励
-    训练，仅更新对应头部。两类 Critic 均读取联合观测和动作。
+    训练，仅更新对应头部。中心 Critic 读取联合观测和动作，园区 Critic 仅读取本地输入。
 
     Args:
         episodes: 训练回合数。
@@ -180,7 +180,7 @@ def train_ddpg(
     print(
         "DDPG 整体训练初始化完成: "
         f"agents={len(agents)}, state_dim={state_dim}, action_dim={action_dim}, "
-        f"critics=1 个中心 + {agent.n_agents} 个园区（均为全局输入）, "
+        f"critics=1 个中心（全局输入）+ {agent.n_agents} 个园区（本地输入）, "
         "actor=本地观测→共享主干→专属头部；中心 Q 更新主干，园区 Q 更新头部"
     )
 

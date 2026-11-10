@@ -87,10 +87,12 @@ class DDPGAgent:
         self.global_critic_target.load_state_dict(self.global_critic.state_dict())
         self.global_critic_optimizer = optim.Adam(self.global_critic.parameters(), lr=lr_critic)
         self.critics = nn.ModuleList(
-            Critic(state_dim, action_dim) for _ in range(self.n_agents)
+            Critic(obs_dim, local_action_dim)
+            for obs_dim, local_action_dim in zip(self.obs_dims, self.action_dims)
         ).to(self.device)
         self.critic_targets = nn.ModuleList(
-            Critic(state_dim, action_dim) for _ in range(self.n_agents)
+            Critic(obs_dim, local_action_dim)
+            for obs_dim, local_action_dim in zip(self.obs_dims, self.action_dims)
         ).to(self.device)
         self.critic_targets.load_state_dict(self.critics.state_dict())
         self.critic_optimizers = [
@@ -159,23 +161,30 @@ class DDPGAgent:
         rewards = rewards.reshape(self.batch_size, self.n_agents)
         next_states = torch.as_tensor(next_states, dtype=torch.float32, device=self.device)
         dones = torch.as_tensor(dones, dtype=torch.float32, device=self.device).unsqueeze(1)      # (B,1)
+        # 回放按固定园区顺序拆分，园区评价器仅使用自己的 transition 分量。
+        local_states = torch.split(states, self.obs_dims, dim=-1)
+        local_actions = torch.split(actions, self.action_dims, dim=-1)
+        local_next_states = torch.split(next_states, self.obs_dims, dim=-1)
 
         with torch.no_grad():
             next_actions = self._joint_actions(next_states, self.actor_target)
+            local_next_actions = torch.split(next_actions, self.action_dims, dim=-1)
             global_target = rewards.sum(dim=1, keepdim=True) + (1.0 - dones) * self.gamma \
                 * self.global_critic_target(next_states, next_actions)
             target_values = [
                 rewards[:, i:i + 1] + (1.0 - dones) * self.gamma
-                * target(next_states, next_actions)
+                * target(local_next_states[i], local_next_actions[i])
                 for i, target in enumerate(self.critic_targets)
             ]
 
-        for critic, optimizer, target_q in zip(
+        for critic, optimizer, target_q, critic_states, critic_actions in zip(
             [self.global_critic, *self.critics],
             [self.global_critic_optimizer, *self.critic_optimizers],
             [global_target, *target_values],
+            [states, *local_states],
+            [actions, *local_actions],
         ):
-            critic_loss = nn.MSELoss()(critic(states, actions), target_q)
+            critic_loss = nn.MSELoss()(critic(critic_states, critic_actions), target_q)
             optimizer.zero_grad(set_to_none=True)
             critic_loss.backward()
             torch.nn.utils.clip_grad_norm_(critic.parameters(), 1.0)
@@ -212,24 +221,19 @@ class DDPGAgent:
             self.backbone_optimizer.zero_grad(set_to_none=True)
 
     def _update_heads(self, states: torch.Tensor) -> None:
-        """园区 Q 仅更新对应头部；联合观测用于评价，主干和其他动作停止梯度。"""
+        """拆分 states 为本地观测，园区 Q 仅更新对应头部；主干特征停止梯度。"""
         self.actor.zero_grad(set_to_none=True)
         local_obs = torch.split(states, self.obs_dims, dim=-1)
-        # 使用更新后的主干重新计算特征；其他园区动作保持同一快照，避免更新顺序偏差。
+        # 用更新后的主干重新计算特征并停止梯度，避免局部目标更新共享参数。
         with torch.no_grad():
             features = [self.actor.backbone(obs) for obs in local_obs]
-            fixed_actions = [
-                head(feature) * self.max_action
-                for head, feature in zip(self.actor.action_heads, features)
-            ]
         self.critics.requires_grad_(False)
         try:
             for i, (head, critic, optimizer) in enumerate(zip(
                 self.actor.action_heads, self.critics, self.head_optimizers,
             )):
-                actions = list(fixed_actions)
-                actions[i] = head(features[i]) * self.max_action
-                loss = -critic(states, torch.cat(actions, dim=-1)).mean()
+                local_action = head(features[i]) * self.max_action
+                loss = -critic(local_obs[i], local_action).mean()
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(head.parameters(), 1.0)
