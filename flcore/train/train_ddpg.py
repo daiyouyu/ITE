@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -126,9 +127,9 @@ def train_ddpg(
     """
     使用一个 DDPG 智能体对 ``MultiBatteryCoordinator`` 中的所有单体进行整体训练。
 
-    每一步会按固定顺序拼接所有单体观测，由同一个 Actor 一次性生成联合动作；
-    每个园区的独立 Critic 读取联合观测与动作，学习自身奖励对应的长期回报；
-    Actor 汇总全部 Critic 的评价统一更新，所有网络均位于训练中心侧。
+    每个园区仅用自身观测调用共享主干及专属头部生成动作。
+    中心 Critic 用奖励总和训练，仅更新共享主干；园区 Critic 用自身奖励
+    训练，仅更新对应头部。两类 Critic 均读取联合观测和动作。
 
     Args:
         episodes: 训练回合数。
@@ -179,8 +180,8 @@ def train_ddpg(
     print(
         "DDPG 整体训练初始化完成: "
         f"agents={len(agents)}, state_dim={state_dim}, action_dim={action_dim}, "
-        f"critics={agent.n_agents}（全局输入、园区独立奖励）, "
-        "actor=局部编码器+全局融合+独立动作头"
+        f"critics=1 个中心 + {agent.n_agents} 个园区（均为全局输入）, "
+        "actor=本地观测→共享主干→专属头部；中心 Q 更新主干，园区 Q 更新头部"
     )
 
     try:
@@ -200,11 +201,12 @@ def train_ddpg(
                     # 噪声随全部训练进度衰减，避免每个新回合重新回到高噪声。
                     progress = (episode * horizon + step) / max(1, episodes * horizon - 1)
                     noise_scale = 0.3 * (1.0 - progress)
-                    joint_action = agent.select_action(
-                        state,
-                        explore=True,
-                        noise_scale=noise_scale,
-                    )
+                    joint_action = flatten_actions([
+                        agent.select_local_action(
+                            obs_dict[agent_id], i, explore=True, noise_scale=noise_scale,
+                        )
+                        for i, agent_id in enumerate(agents)
+                    ])
 
                 action_dict = _split_joint_action(
                     joint_action,
@@ -237,6 +239,7 @@ def train_ddpg(
                 agent.train()
 
                 state = next_state
+                obs_dict = next_obs_dict
                 episode_rewards += reward_list
                 _update_episode_info(episode_info, info_dict, agents)
                 completed_steps += 1
@@ -263,6 +266,12 @@ def train_ddpg(
             )
 
         agent.save("./model_pth/ddpg")
+        result_dir = Path("./result/CentralizedActor")
+        result_dir.mkdir(parents=True, exist_ok=True)
+        result_path = result_dir / "result_arrays.npz"
+        # 与主入口保持相同的键和维度（园区数 × 回合数），便于复用绘图工具。
+        np.savez(result_path, DDPG=np.asarray(rewards).T)
+        print(f"DDPG 训练结果已保存到 {result_path}")
     finally:
         env.close()
         test_env.close()

@@ -152,8 +152,10 @@ def main(args):
             print(f"{'='*10} 任务 {run_name} 运行结束 {'='*10}\n")
 
     # --- 保存结果 ---
+    # DDPG 在训练函数内写入固定目录，直接调用和串行/并行入口使用同一路径。
+    results_to_save.pop("DDPG", None)
     if not results_to_save:
-        print("没有训练结果可以保存。")
+        print("所有任务完成，训练结果已保存。")
         return
         
     now = dt.now().strftime('%Y%m%d')

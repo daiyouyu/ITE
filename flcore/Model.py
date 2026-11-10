@@ -34,18 +34,17 @@ class Actor(nn.Module):
 
 class StructuredCentralizedActor(nn.Module):
     """
-    面向多园区集中控制的结构化 Actor。
+    本地观测经过共享主干和园区专属头部，输出该园区的动作。
 
-    每个园区的观测先由独立编码器提取局部特征，再将全部局部特征融合为
-    全局上下文。每个动作头同时使用本园区特征和全局上下文，因此既保留
-    园区自身状态，也能利用其他园区的信息协调联合动作。
+    各园区观测必须具有相同维度及字段语义；主干只有一份参数，
+    每次调用仅处理指定园区的观测，不融合其他园区的信息。
 
     Args:
         obs_dims: 按固定园区顺序排列的观测维度。
         action_dims: 与 ``obs_dims`` 顺序一致的动作维度。
         max_action: Actor 输出动作的绝对值上限。
-        local_hidden_dim: 每个园区局部编码器的输出维度。
-        global_hidden_dim: 全局融合特征维度。
+        local_hidden_dim: 主干第一层宽度。
+        global_hidden_dim: 主干输出和动作头隐藏层宽度。
     """
 
     def __init__(
@@ -63,26 +62,19 @@ class StructuredCentralizedActor(nn.Module):
             raise ValueError("obs_dims 和 action_dims 必须非空且长度一致")
         if any(dim <= 0 for dim in self.obs_dims + self.action_dims):
             raise ValueError("观测维度和动作维度必须均大于 0")
+        if len(set(self.obs_dims)) != 1:
+            raise ValueError("共享主干要求各园区观测维度一致，且字段语义对齐")
 
         self.max_action = float(max_action)
-        self.local_encoders = nn.ModuleList(
-            nn.Sequential(
-                nn.Linear(obs_dim, local_hidden_dim),
-                nn.ReLU(),
-                nn.Linear(local_hidden_dim, local_hidden_dim),
-                nn.ReLU(),
-            )
-            for obs_dim in self.obs_dims
-        )
-        self.global_fusion = nn.Sequential(
-            nn.Linear(local_hidden_dim * len(self.obs_dims), global_hidden_dim),
+        self.backbone = nn.Sequential(
+            nn.Linear(self.obs_dims[0], local_hidden_dim),
             nn.ReLU(),
-            nn.Linear(global_hidden_dim, global_hidden_dim),
+            nn.Linear(local_hidden_dim, global_hidden_dim),
             nn.ReLU(),
         )
         self.action_heads = nn.ModuleList(
             nn.Sequential(
-                nn.Linear(local_hidden_dim + global_hidden_dim, global_hidden_dim),
+                nn.Linear(global_hidden_dim, global_hidden_dim),
                 nn.ReLU(),
                 nn.Linear(global_hidden_dim, action_dim),
                 nn.Tanh(),
@@ -90,31 +82,22 @@ class StructuredCentralizedActor(nn.Module):
             for action_dim in self.action_dims
         )
 
-    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+    def forward(self, obs: torch.Tensor, agent_index: int) -> torch.Tensor:
         """
-        根据拼接后的全部园区观测生成联合动作。
+        根据本地观测和园区索引生成该园区动作。
 
-        输入最后一维必须等于 ``sum(obs_dims)``；输出按输入园区顺序拼接，
-        最后一维等于 ``sum(action_dims)``。
+        obs 最后一维必须等于该园区观测维度；返回最后一维为该园区动作维度。
+        园区索引越界或观测维度不匹配时抛出 ValueError。
         """
-        if obs.shape[-1] != sum(self.obs_dims):
+        if not 0 <= agent_index < len(self.obs_dims):
+            raise ValueError(f"园区索引越界: agent_index={agent_index}")
+        if obs.shape[-1] != self.obs_dims[agent_index]:
             raise ValueError(
-                f"联合观测维度不匹配: expected={sum(self.obs_dims)}, "
+                f"本地观测维度不匹配: expected={self.obs_dims[agent_index]}, "
                 f"actual={obs.shape[-1]}"
             )
 
-        local_observations = torch.split(obs, self.obs_dims, dim=-1)
-        local_features = [
-            encoder(local_obs)
-            for encoder, local_obs in zip(self.local_encoders, local_observations)
-        ]
-        global_context = self.global_fusion(torch.cat(local_features, dim=-1))
-
-        local_actions = [
-            action_head(torch.cat([local_feature, global_context], dim=-1))
-            for action_head, local_feature in zip(self.action_heads, local_features)
-        ]
-        return torch.cat(local_actions, dim=-1) * self.max_action
+        return self.action_heads[agent_index](self.backbone(obs)) * self.max_action
 
 class Critic(nn.Module):
     """Centralized critic: input = concat(all_obs, all_actions)"""
