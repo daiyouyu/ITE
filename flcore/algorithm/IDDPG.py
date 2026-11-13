@@ -180,7 +180,7 @@ class IDDPG:
             for p, p_t in zip(self.critics[i].parameters(), self.critic_targets[i].parameters()):
                 p_t.data.copy_(self.tau * p.data + (1.0 - self.tau) * p_t.data)
 
-    def Fed_Aggergate(self, method='DSFA', online_agents=None):
+    def Fed_Aggergate(self, method='DSFA', online_agents=None, *, communication=None):
         """按在线园区集合聚合，返回完整权重矩阵（离线行列为零）。
 
         Args:
@@ -190,6 +190,11 @@ class IDDPG:
         Returns:
             成功时返回 n_agents × n_agents 权重矩阵；历史不足时返回 None。
         """
+        if communication is not None:
+            if method != 'DSFA':
+                raise ValueError("两阶段通信仅支持 DSFA")
+            from flcore.algorithm.selective_communication import aggregate_selected
+            return aggregate_selected(self, online_agents, **communication)
         online = list(range(self.n_agents)) if online_agents is None else list(online_agents)
         if len(set(online)) != len(online) or any(i < 0 or i >= self.n_agents for i in online):
             raise ValueError("online_agents 包含无效或重复的园区索引")
@@ -219,7 +224,7 @@ class IDDPG:
                 }
             for i in online:
                 similarity = np.array([
-                    1.0 / (F.l1_loss(proto_ref[i], avg_proto[j], reduction='mean').item() + 1e-8)
+                    1.0 / (torch.linalg.vector_norm(avg_proto[i] - proto_ref[j]).item() + 1e-8)
                     for j in online
                 ], dtype=np.float64)
                 weights[i, online] = similarity / similarity.sum()

@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 import time
+import json
+from pathlib import Path
 import io
 import numpy as np
 import os
@@ -217,6 +219,7 @@ def train_iddpg(
     Federated=True,
     fed_method='DSFA',
     *,
+    communication: dict | None = None,
     lost_contact: bool = False,
     lost_contact_phase: str = "normal",
     branch_episode: int = 200,
@@ -228,6 +231,7 @@ def train_iddpg(
     """训练 IDDPG；断联实验按正常、断联两个阶段调用，共享第 200 轮内存状态。
 
     Args:
+        communication: 两阶段通信配置，包含 strategy、neighbors 和 seed；None 保留全量通信。
         lost_contact: 启用断联对比实验；False 时保持原有训练和返回值。
         lost_contact_phase: normal 先完成普通协作训练，disconnected 再续训失联分支。
         branch_episode: 共同训练结束后的分支起点，必须小于总 episode 数。
@@ -240,6 +244,12 @@ def train_iddpg(
         普通训练返回奖励与测试奖励；断联正常阶段返回内存状态字节串，
         断联阶段返回逐 episode 奖励数组。
     """
+    if communication is not None:
+        if lost_contact or not Federated or fed_method != 'DSFA':
+            raise ValueError('选择性通信入口仅支持普通 DSFA；断联可通过聚合接口的 online_agents 测试')
+        from flcore.algorithm.selective_communication import select_neighbors
+        select_neighbors(np.zeros(0), [], communication['strategy'],
+                         communication['neighbors'], np.random.default_rng(communication['seed']))
     if lost_contact:
         if not Federated or fed_method not in ("DSFA", "FedAvg"):
             raise ValueError("断联实验仅支持联邦 DSFA 和 FedAvg")
@@ -322,7 +332,8 @@ def train_iddpg(
         train_days=train,
         test_days=test
     )
-    env, test_env = build_envs(train_series, test_series, presets.env_kwargs)
+    # 普通训练只使用训练环境；test=0 时不能构造空测试序列环境。
+    env = MultiBatteryCoordinator(train_series, **presets.env_kwargs)
     obs_dims, action_dims, max_actions, agents = infer_dims(env)
     
     # Initialize the algorithm
@@ -336,6 +347,12 @@ def train_iddpg(
     rewards, test_rewards = [], []
     # This list will store the average weight matrix for each episode
     federation_weights_history = []
+
+    # 通信实验跨 episode 计步：一天只有 24 步，不能每轮重新预热。
+    total_steps = 0
+    if communication is not None:
+        for i, agent_name in enumerate(agents):
+            env.action_spaces[agent_name].seed(communication['seed'] + i)
 
     # --- Training Loop ---
     for ep in range(episodes):
@@ -359,7 +376,8 @@ def train_iddpg(
             obs_list = list_by_agents(obs, agents)
             
             # Action selection
-            if t < presets.noise_warmup_steps:
+            clock_step = total_steps if communication is not None else t
+            if clock_step < presets.noise_warmup_steps:
                 actions_list = [env.action_spaces[a].sample() for a in agents]
             else:
                 noise_scale = 0.3 * (1 - t / horizon)
@@ -376,15 +394,17 @@ def train_iddpg(
             joint_next_obs = flatten_obs(next_obs_list)
             iddpg.replay.add(joint_obs, joint_act, rew_list, joint_next_obs, done_list)
 
+            total_steps += 1
+            update_step = total_steps if communication is not None else t
             # Update networks
-            if t > 0 and t % 3 == 0:
+            if update_step > 0 and update_step % 3 == 0:
                 iddpg.update()
 
             # --- Federated Aggregation Step ---
             # I_fed is 24, as in your original code
-            if Federated and t > 0 and t % 24 == 0:
+            if Federated and update_step > 0 and update_step % 24 == 0:
                 # Call aggregation and potentially get weights back
-                agg_weights = iddpg.Fed_Aggergate(method=fed_method)
+                agg_weights = iddpg.Fed_Aggergate(method=fed_method, communication=communication)
                 
                 # If DSFA was used, weights are returned and we record them
                 if agg_weights is not None: # If weights are returned, store them for this episode
@@ -419,10 +439,20 @@ def train_iddpg(
     env.close()
     # Save the model
     model_prefix = f"iddpg_{fed_method}"
-    iddpg.save(prefix=model_prefix, Fed=Federated)
+    if communication is not None:
+        run_dir = Path(output_root)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        iddpg.save_to_directory(str(run_dir / 'models'))
+        (run_dir / 'communication.json').write_text(
+            json.dumps({'config': communication,
+                        'rounds': getattr(iddpg, 'communication_records', [])},
+                       ensure_ascii=False), encoding='utf-8')
+        np.savez(run_dir / 'rewards.npz', DSFA=np.asarray(rewards).T)
+    else:
+        iddpg.save(prefix=model_prefix, Fed=Federated)
 
     # --- Save Federation Weights ---
-    if federation_weights_history:
+    if federation_weights_history and communication is None:
         # Create a directory for today's results if it doesn't exist
         now_date = dt.now().strftime('%Y%m%d')
         save_dir = os.path.join('result', now_date)
