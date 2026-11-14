@@ -192,7 +192,7 @@ if __name__ == "__main__":
         '-d', '--train_days',
         type=int,
         default=365,
-        help="用于训练的数据天数。默认: 365"
+        help="用于训练的数据天数；单日训练使用 --train_days 1，每轮重复该日数据。默认: 365"
     )
     parser.add_argument(
         '-m', '--mode',

@@ -40,12 +40,16 @@ class BatteryEnvSingle(gym.Env):
                  P_HB_e_h=15,
                  P_HB_e_l=0,
                  seed: int | None = None,
+                 es_enabled: bool = True,
+                 chp_enabled: bool = True,
                  ):
         super().__init__()
         self.dt = float(dt_hours)
         self.E = float(E_bat_MWh)
         self.Pmax = float(P_bat_max_MW)
-        self.P_es = 0.1
+        self.es_enabled = bool(es_enabled)
+        self.chp_enabled = bool(chp_enabled)
+        self.P_es = 0.1 if self.es_enabled else 0.0
         self.eta_ch, self.eta_dis = float(eta_ch), float(eta_dis)
         self.soc_min, self.soc_max = float(soc_min), float(soc_max)
         self.soc_init = float(soc_init)
@@ -246,7 +250,11 @@ class BatteryEnvSingle(gym.Env):
         }
         return obs_next, float(reward_placeholder), bool(done), False, info
 
-    def _soc_block(self, a):
+    def _soc_block(self, a: float) -> None:
+        """更新储能状态；无 ES 时忽略动作 a，出力为零且 SOC 不变。"""
+        if not self.es_enabled:
+            self.P_es = 0.0
+            return
         a = (a + 1) / 2  # 调整到 0~1
         if self.P_es >= 0 and self._soc < self.soc_max:
             self.P_es = min(a * self.Pmax, (self.soc_max - self._soc) * self.E / self.eta_ch)
@@ -282,7 +290,10 @@ class BatteryEnvSingle(gym.Env):
         return boiler_cost, cco2_cost
 
     # 定义热电联产模块
-    def _CHP_block(self, a_norm: float):
+    def _CHP_block(self, a_norm: float) -> tuple[float, float]:
+        """将归一化动作转换为电、热出力；无 CHP 时均返回零。"""
+        if not self.chp_enabled:
+            return 0.0, 0.0
         # 定义参数
         P_CHP_e_h = 8
         P_CHP_e_l = 0
@@ -296,7 +307,10 @@ class BatteryEnvSingle(gym.Env):
         P_CHP_h = alpha_CHP * P_CHP_e
         return P_CHP_e, P_CHP_h
 
-    def _CHP_cost(self, CHP_e, CHP_h):
+    def _CHP_cost(self, CHP_e: float, CHP_h: float) -> tuple[float, float]:
+        """按电、热出力计算 CHP 成本和碳成本；缺失设备不计固定成本。"""
+        if not self.chp_enabled:
+            return 0.0, 0.0
         a = self.CHP_a
         b = self.CHP_b
         c = self.CHP_c

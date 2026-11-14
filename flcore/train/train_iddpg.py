@@ -326,6 +326,13 @@ def train_iddpg(
 
     # --- Setup ---
     presets = default_presets()
+    if Federated and fed_method == 'DSFA' and communication is None:
+        # 普通 DSFA 使用缺失设备场景，保留动作维度以兼容联邦参数聚合。
+        # park 1/2/3 分别对应 agent_0/1/2；断联实验已在上方独立处理。
+        park_configs = presets.env_kwargs["per_agent_kwargs"]
+        park_configs["agent_0"]["es_enabled"] = False
+        park_configs["agent_2"]["es_enabled"] = False
+        park_configs["agent_1"]["chp_enabled"] = False
     train_series, test_series, T, train_idx, test_idx = load_series_split(
         path1="./data/IES_data/G_demand.csv",
         path2="./data/IES_data/H_demand.csv",
@@ -348,7 +355,7 @@ def train_iddpg(
     # This list will store the average weight matrix for each episode
     federation_weights_history = []
 
-    # 通信实验跨 episode 计步：一天只有 24 步，不能每轮重新预热。
+    # 跨 episode 累计步数，避免单日训练反复预热且无法触发联邦聚合。
     total_steps = 0
     if communication is not None:
         for i, agent_name in enumerate(agents):
@@ -376,8 +383,7 @@ def train_iddpg(
             obs_list = list_by_agents(obs, agents)
             
             # Action selection
-            clock_step = total_steps if communication is not None else t
-            if clock_step < presets.noise_warmup_steps:
+            if total_steps < presets.noise_warmup_steps:
                 actions_list = [env.action_spaces[a].sample() for a in agents]
             else:
                 noise_scale = 0.3 * (1 - t / horizon)
@@ -395,7 +401,7 @@ def train_iddpg(
             iddpg.replay.add(joint_obs, joint_act, rew_list, joint_next_obs, done_list)
 
             total_steps += 1
-            update_step = total_steps if communication is not None else t
+            update_step = total_steps
             # Update networks
             if update_step > 0 and update_step % 3 == 0:
                 iddpg.update()
@@ -429,11 +435,11 @@ def train_iddpg(
             avg_episode_weights = np.mean(episode_weights, axis=0)
             federation_weights_history.append(avg_episode_weights)
 
-        rewards.append((ep_rew / max(1, t)) * 24)
+        rewards.append((ep_rew / (t + 1)) * 24)
         ep_time = (time.time() - start_time) / 60
         print(f"Fed:{Federated}_iddpg ({fed_method})\n"
               f"Episode {ep+1}/{episodes} | Time: {ep_time:.2f} min | Est. Rem: {ep_time * (episodes - ep - 1):.2f} min")
-        print(format_episode_info(ep, (ep_rew / max(1, t)) * 24, ep_info[0]))
+        print(format_episode_info(ep, (ep_rew / (t + 1)) * 24, ep_info[0]))
 
     # --- After Training ---
     env.close()
