@@ -326,7 +326,8 @@ def train_iddpg(
 
     # --- Setup ---
     presets = default_presets()
-    if Federated and fed_method == 'DSFA' and communication is None:
+    missing_devices = Federated and fed_method == 'DSFA' and communication is None
+    if missing_devices:
         # 普通 DSFA 使用缺失设备场景，保留动作维度以兼容联邦参数聚合。
         # park 1/2/3 分别对应 agent_0/1/2；断联实验已在上方独立处理。
         park_configs = presets.env_kwargs["per_agent_kwargs"]
@@ -444,7 +445,7 @@ def train_iddpg(
     # --- After Training ---
     env.close()
     # Save the model
-    model_prefix = f"iddpg_{fed_method}"
+    model_prefix = "missing_DSFA" if missing_devices else f"iddpg_{fed_method}"
     if communication is not None:
         run_dir = Path(output_root)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -456,12 +457,17 @@ def train_iddpg(
         np.savez(run_dir / 'rewards.npz', DSFA=np.asarray(rewards).T)
     else:
         iddpg.save(prefix=model_prefix, Fed=Federated)
+        if missing_devices:
+            # 在训练入口统一保存，确保直接调用与串行、并行运行的目录一致。
+            result_dir = Path('result') / 'missing'
+            result_dir.mkdir(parents=True, exist_ok=True)
+            np.savez(result_dir / 'result_arrays.npz', DSFA=np.asarray(rewards).T)
 
     # --- Save Federation Weights ---
     if federation_weights_history and communication is None:
         # Create a directory for today's results if it doesn't exist
         now_date = dt.now().strftime('%Y%m%d')
-        save_dir = os.path.join('result', now_date)
+        save_dir = os.path.join('result', 'missing' if missing_devices else now_date)
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
         
