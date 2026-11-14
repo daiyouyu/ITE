@@ -1,0 +1,15 @@
+{
+  "strategy": [
+    "nearest",
+    "farthest",
+    "random"
+  ],
+  "neighbors": [
+    2,
+    3
+  ],
+  "seed": 0,
+  "epochs": 1000,
+  "train_days": 1,
+  "workers": 2
+}
