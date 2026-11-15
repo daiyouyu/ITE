@@ -48,6 +48,9 @@ def default_presets() -> Presets:
         n_agents=4,
         dt_hours=1.0,
         deg_cost_per_MW=1,
+        # 每 MWh 未能执行的储能请求处罚 100，最终奖励沿用 /1000 缩放。
+        # 设为 0 可关闭；不处罚禁用储能的园区，也不影响其他设备动作。
+        battery_invalid_action_cost_per_MWh=100.0,
         obs_norm=True,
         # === 新增：逐 agent 覆盖 ===
         per_agent_kwargs={

@@ -42,6 +42,7 @@ class BatteryEnvSingle(gym.Env):
                  seed: int | None = None,
                  es_enabled: bool = True,
                  chp_enabled: bool = True,
+                 battery_invalid_action_cost_per_MWh: float = 0.0,
                  ):
         super().__init__()
         self.dt = float(dt_hours)
@@ -61,6 +62,9 @@ class BatteryEnvSingle(gym.Env):
             raise ValueError("SOC 上下限必须满足 0 <= soc_min < soc_max <= 1，初始值必须有限")
         self.deg_c = float(deg_cost_per_MW)
         self.penalty_soc = float(penalty_soc)
+        self.battery_invalid_action_cost_per_MWh = float(battery_invalid_action_cost_per_MWh)
+        if not np.isfinite(self.battery_invalid_action_cost_per_MWh) or self.battery_invalid_action_cost_per_MWh < 0:
+            raise ValueError("储能无效动作单位处罚必须为有限非负数")
         self.obs_norm = bool(obs_norm)
 
         # 锅炉参数
@@ -164,6 +168,11 @@ class BatteryEnvSingle(gym.Env):
         # 1) 电池动作缩放
         a = float(np.clip(action[0], -1.0, 1.0))
         self._soc_block(a)
+        # 请求和实际功率均采用正放负充；只处罚 SOC 限制导致的未执行部分。
+        # 无设备的园区忽略储能动作，不产生无效动作处罚。
+        battery_requested_MW = a * self.Pmax if self.es_enabled else 0.0
+        battery_invalid_MWh = abs(battery_requested_MW + self.P_es) * self.dt
+        battery_invalid_action_cost = battery_invalid_MWh * self.battery_invalid_action_cost_per_MWh
         # 锅炉动作
         boiler_a = float(np.clip(action[1], -1.0, 1.0))
         P_boiler_e = self._boiler_block(boiler_a)
@@ -233,6 +242,9 @@ class BatteryEnvSingle(gym.Env):
             "P_boiler_e": P_boiler_e,
             "P_CHP_e": P_CHP_e,
             "p_bat": -self.P_es,
+            "battery_requested_MW": battery_requested_MW,
+            "battery_invalid_MWh": battery_invalid_MWh,
+            "battery_invalid_action_cost": battery_invalid_action_cost,
             "H_demand": H_L,
             "P_CHP_h": P_CHP_h,
             "P_HB_h": P_HB_h,
@@ -534,7 +546,9 @@ class MultiBatteryCoordinator(gym.Env):
             # 外网补足热力
             heat_cost = max(0.0, net_heat) * 360
             total_cost = local_cost + elec_cost + heat_cost
-            rew = - total_cost / 1000.0
+            # 单独保留经济成本，处罚仅影响训练奖励，避免混入运行成本统计。
+            battery_invalid_action_cost = float(inf.get("battery_invalid_action_cost", 0.0))
+            rew = -(total_cost + battery_invalid_action_cost) / 1000.0
 
             rews[aid] = float(rew)
             ii = dict(inf)
