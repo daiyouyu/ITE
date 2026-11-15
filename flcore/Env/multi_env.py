@@ -17,7 +17,7 @@ class BatteryEnvSingle(gym.Env):
                  dt_hours=1.0,
                  E_bat_MWh=15.0,
                  P_bat_max_MW=10.0,
-                 eta_ch=0.95, eta_dis=1.05,
+                 eta_ch=0.95, eta_dis=0.95,
                  soc_min=0.1, soc_max=0.9, soc_init=0.1,
                  deg_cost_per_MW=2,
                  penalty_soc=0.0,
@@ -49,10 +49,16 @@ class BatteryEnvSingle(gym.Env):
         self.Pmax = float(P_bat_max_MW)
         self.es_enabled = bool(es_enabled)
         self.chp_enabled = bool(chp_enabled)
-        self.P_es = 0.1 if self.es_enabled else 0.0
+        self.P_es = 0.0
         self.eta_ch, self.eta_dis = float(eta_ch), float(eta_dis)
         self.soc_min, self.soc_max = float(soc_min), float(soc_max)
         self.soc_init = float(soc_init)
+        if not all(np.isfinite(value) and value > 0 for value in (self.dt, self.E, self.Pmax)):
+            raise ValueError("储能时间步长、容量及最大功率必须为有限正数")
+        if not all(np.isfinite(value) and 0 < value <= 1 for value in (self.eta_ch, self.eta_dis)):
+            raise ValueError("充放电效率必须在 (0, 1] 内")
+        if not (0 <= self.soc_min < self.soc_max <= 1) or not np.isfinite(self.soc_init):
+            raise ValueError("SOC 上下限必须满足 0 <= soc_min < soc_max <= 1，初始值必须有限")
         self.deg_c = float(deg_cost_per_MW)
         self.penalty_soc = float(penalty_soc)
         self.obs_norm = bool(obs_norm)
@@ -141,6 +147,7 @@ class BatteryEnvSingle(gym.Env):
         if seed is not None:
             self._rng = np.random.default_rng(seed)
         self._t = 0
+        self.P_es = 0.0
         self._soc = float(np.clip(self.soc_init, self.soc_min, self.soc_max))
         # 注意：协调器会在 reset 之后立刻 set_exogenous(t=0) 再读取观测
         return self._make_obs(0.0, 0.0), {}
@@ -194,7 +201,7 @@ class BatteryEnvSingle(gym.Env):
 
         # === 子环境决定：是否售电 / 售电报价（成本×1.1） / 购买外部电价 ===
         # 单位成本近似：以“用于供电的出力”作为分母做加权
-        p_dis = max(0.0, self.P_es)  # 电池放电功率
+        p_dis = max(0.0, -self.P_es)  # 内部 P_es 为负时放电，计入供电成本分母
         gen = max(0.0, P_boiler_e) + max(0.0, P_CHP_e)  # 锅炉出力
         R_gen = max(0.0, R)
         R_cost = max(0.0, R_gen * 5)
@@ -251,19 +258,29 @@ class BatteryEnvSingle(gym.Env):
         return obs_next, float(reward_placeholder), bool(done), False, info
 
     def _soc_block(self, a: float) -> None:
-        """更新储能状态；无 ES 时忽略动作 a，出力为零且 SOC 不变。"""
+        """按动作更新实际功率及 SOC，无返回值。
+
+        a 为归一化动作：正值放电、负值充电、零为待机，越界值裁至 [-1, 1]。
+        内部 P_es 保持正充负放，info 中 p_bat 正放负充。
+        实际功率受额定功率、SOC 和时间步长约束；禁用储能时保持 SOC 不变。
+        """
+        if not np.isfinite(a):
+            raise ValueError("储能动作必须为有限数值")
+        self.P_es = 0.0
         if not self.es_enabled:
-            self.P_es = 0.0
             return
-        a = (a + 1) / 2  # 调整到 0~1
-        if self.P_es >= 0 and self._soc < self.soc_max:
-            self.P_es = min(a * self.Pmax, (self.soc_max - self._soc) * self.E / self.eta_ch)
-            eta = self.eta_ch
-        else:
-            self.P_es = max(a * -self.Pmax, (self.soc_min - self._soc) * self.E / self.eta_dis)
-            eta = self.eta_dis
-        soc = (eta * self.P_es) / self.E
-        self._soc = soc + self._soc
+        requested_power = float(np.clip(a, -1.0, 1.0)) * self.Pmax
+        if requested_power < 0.0:
+            # 电网侧充电能量乘效率后才进入电池，避免长时间步充电越界。
+            charge_limit = max(0.0, (self.soc_max - self._soc) * self.E / (self.eta_ch * self.dt))
+            self.P_es = min(-requested_power, charge_limit)
+            self._soc += self.P_es * self.eta_ch * self.dt / self.E
+        elif requested_power > 0.0:
+            # 向负荷供电需要从电池扣除更多能量，因此可用出力需乘放电效率。
+            discharge_limit = max(0.0, (self._soc - self.soc_min) * self.E * self.eta_dis / self.dt)
+            self.P_es = -min(requested_power, discharge_limit)
+            self._soc += self.P_es * self.dt / (self.eta_dis * self.E)
+        self._soc = float(np.clip(self._soc, self.soc_min, self.soc_max))
 
     def _H_restore_block(self, a_ch, a_dis):
         a_ch = (float(np.clip(a_ch, -1.0, 1.0)) + 1.0) / 2.0
