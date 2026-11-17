@@ -504,7 +504,7 @@ def test_model_and_plot(algo: str = "iddpg",
     else:
         model = MADDPG(
             obs_dims, action_dims, max_actions,
-            shared_obs_indices=[-2, -1],
+            shared_obs_indices=[-2],
             **presets.algo_kwargs
         )
     model.load(Fed=Fed)

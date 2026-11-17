@@ -43,12 +43,58 @@ class BatteryEnvSingle(gym.Env):
                  es_enabled: bool = True,
                  chp_enabled: bool = True,
                  battery_invalid_action_cost_per_MWh: float = 0.0,
+                 hydrogen_invalid_action_cost_per_MWh: float = 0.0,
+                 storage_type: str = "battery",
+                 E_h2_MWh: float = 72.0,
+                 P_el_max_MW: float = 3.0,
+                 P_fc_max_MW: float = 3.0,
+                 eta_el: float = 0.70,
+                 eta_fc_e: float = 0.50,
+                 eta_fc_heat: float = 0.30,
+                 h2_soc_min: float = 0.10,
+                 h2_soc_max: float = 0.90,
+                 h2_soc_init: float = 0.10,
+                 h2_operating_cost_per_MWh: float = 5.0,
+                 h2_ramp_MW_per_hour: float = 1.5,
+                 terminal_electricity_value_per_MWh: float = 200.0,
                  ):
         super().__init__()
         self.dt = float(dt_hours)
         self.E = float(E_bat_MWh)
         self.Pmax = float(P_bat_max_MW)
         self.es_enabled = bool(es_enabled)
+        if storage_type not in {"battery", "none", "hydrogen"}:
+            raise ValueError("storage_type 必须为 battery、none 或 hydrogen")
+        self.storage_type = storage_type
+        self.E_h2 = float(E_h2_MWh)
+        self.P_el_max = float(P_el_max_MW)
+        self.P_fc_max = float(P_fc_max_MW)
+        self.eta_el = float(eta_el)
+        self.eta_fc_e = float(eta_fc_e)
+        self.eta_fc_heat = float(eta_fc_heat)
+        self.h2_soc_min = float(h2_soc_min)
+        self.h2_soc_max = float(h2_soc_max)
+        self.h2_soc_init = float(h2_soc_init)
+        self.h2_operating_cost = float(h2_operating_cost_per_MWh)
+        self.h2_ramp = float(h2_ramp_MW_per_hour)
+        self.terminal_electricity_value = float(terminal_electricity_value_per_MWh)
+        self.hydrogen_invalid_action_cost_per_MWh = float(hydrogen_invalid_action_cost_per_MWh)
+        if not all(np.isfinite(v) and v > 0 for v in (self.E_h2, self.P_el_max, self.P_fc_max)):
+            raise ValueError("储氢容量、电解槽及燃料电池功率必须为有限正数")
+        if not (0 < self.eta_el <= 1 and 0 < self.eta_fc_e <= 1
+                and 0 <= self.eta_fc_heat <= 1 - self.eta_fc_e):
+            raise ValueError("氢系统效率必须满足能量守恒")
+        if not (0 <= self.h2_soc_min < self.h2_soc_max <= 1
+                and self.h2_soc_min <= self.h2_soc_init <= self.h2_soc_max):
+            raise ValueError("储氢初始比例及上下限无效")
+        if not np.isfinite(self.h2_operating_cost) or self.h2_operating_cost < 0:
+            raise ValueError("氢系统运行成本必须为有限非负数")
+        if not np.isfinite(self.h2_ramp) or self.h2_ramp <= 0:
+            raise ValueError("氢系统爬坡速率必须为有限正数")
+        if not np.isfinite(self.terminal_electricity_value) or self.terminal_electricity_value < 0:
+            raise ValueError("回合末储能残值单价必须为有限非负数")
+        if not np.isfinite(self.hydrogen_invalid_action_cost_per_MWh) or self.hydrogen_invalid_action_cost_per_MWh < 0:
+            raise ValueError("氢系统无效动作处罚必须为有限非负数")
         self.chp_enabled = bool(chp_enabled)
         self.P_es = 0.0
         self.eta_ch, self.eta_dis = float(eta_ch), float(eta_dis)
@@ -90,7 +136,11 @@ class BatteryEnvSingle(gym.Env):
         self.episode_len = int(episode_len)
         self._t = 0
         self._soc = float(self.soc_init)
-        self._hsoc = float(self.soc_init)
+        self._hsoc = self.h2_soc_init
+        self._h2_signed_power = 0.0
+        self.P_el = 0.0
+        self.P_fc_e = 0.0
+        self.P_fc_h = 0.0
 
         # 随机性（每个 agent 独立 RNG）
         self._rng = np.random.default_rng(seed)
@@ -107,8 +157,8 @@ class BatteryEnvSingle(gym.Env):
         # 动作/观测空间
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32)
         self.observation_space = spaces.Box(
-            low=np.array([0.0, 0.0, 0.0, -10.0, self.soc_min, -1.0, -1.0, 0.0, -1.0], dtype=np.float32),
-            high=np.array([2.0, 2.0, 2.0, 10000.0, self.soc_max, 1.0, 1.0, 1e6, 1.0], dtype=np.float32))
+            low=np.array([0.0, 0.0, 0.0, -10.0, -1.0, -1.0, -1.0, -1e6, 0.0], dtype=np.float32),
+            high=np.array([2.0, 2.0, 2.0, 10000.0, 1.0, 1.0, 1.0, 1e6, 1.0], dtype=np.float32))
 
     # 由协调器调用，注入本步外生量和（可选）归一化尺度
     def set_exogenous(self, G_L, H_L, R, P, sin_h, cos_h, R_solar=0.0, R_wind=0.0, G_L_scale=1.0, H_L_scale=1.0,
@@ -129,7 +179,7 @@ class BatteryEnvSingle(gym.Env):
         self._R_scale = max(1e-6, float(R_scale))
         self._P_scale = max(1e-6, float(P_scale))
 
-    def _make_obs(self, market_price: float = 0.0, market_MWH: float = 0.0):
+    def _make_obs(self, market_price: float = 0.0):
         G_L = self._exog["G_L"] / self._G_L_scale if self.obs_norm else self._exog["G_L"]
         H_L = self._exog["H_L"] / self._H_L_scale if self.obs_norm else self._exog["H_L"]
         R = self._exog["R"] / self._R_scale if self.obs_norm else self._exog["R"]
@@ -139,11 +189,15 @@ class BatteryEnvSingle(gym.Env):
             H_L,
             R,
             P,
-            self._soc,
+            # 保留爬坡所需的上一步功率；不用原成交量槽位，避免增加观测维度。
+            self._h2_signed_power / max(self.P_el_max, self.P_fc_max)
+            if self.storage_type == "hydrogen" else 0.0,
             self._exog["sin_h"],
             self._exog["cos_h"],
             float(market_price),
-            float(market_MWH)
+            # u_i,t：本园区当前储能比例；无储能园区为 0。
+            self._hsoc if self.storage_type == "hydrogen" else (
+                self._soc if self.storage_type == "battery" and self.es_enabled else 0.0),
         ], dtype=np.float32)
 
     def reset(self, seed=None):
@@ -153,8 +207,13 @@ class BatteryEnvSingle(gym.Env):
         self._t = 0
         self.P_es = 0.0
         self._soc = float(np.clip(self.soc_init, self.soc_min, self.soc_max))
+        self._hsoc = self.h2_soc_init
+        self._h2_signed_power = 0.0
+        self.P_el = 0.0
+        self.P_fc_e = 0.0
+        self.P_fc_h = 0.0
         # 注意：协调器会在 reset 之后立刻 set_exogenous(t=0) 再读取观测
-        return self._make_obs(0.0, 0.0), {}
+        return self._make_obs(0.0), {}
 
     def step(self, action: np.ndarray):
         # 读取当步外生量（由协调器注入）
@@ -165,14 +224,24 @@ class BatteryEnvSingle(gym.Env):
         R_solar = self._exog["R_solar"]
         R_wind = self._exog["R_wind"]
 
-        # 1) 电池动作缩放
+        # 1) 根据园区设备类型执行储能动作
         a = float(np.clip(action[0], -1.0, 1.0))
-        self._soc_block(a)
+        self.P_el = self.P_fc_e = self.P_fc_h = 0.0
+        if self.storage_type == "hydrogen":
+            self._hydrogen_block(a)
+        elif self.storage_type == "battery":
+            self._soc_block(a)
+        else:
+            self.P_es = 0.0
         # 请求和实际功率均采用正放负充；只处罚 SOC 限制导致的未执行部分。
         # 无设备的园区忽略储能动作，不产生无效动作处罚。
-        battery_requested_MW = a * self.Pmax if self.es_enabled else 0.0
+        battery_requested_MW = a * self.Pmax if self.storage_type == "battery" and self.es_enabled else 0.0
         battery_invalid_MWh = abs(battery_requested_MW + self.P_es) * self.dt
         battery_invalid_action_cost = battery_invalid_MWh * self.battery_invalid_action_cost_per_MWh
+        hydrogen_requested_MW = a * (self.P_fc_max if a >= 0 else self.P_el_max) if self.storage_type == "hydrogen" else 0.0
+        hydrogen_actual_MW = self.P_fc_e - self.P_el
+        hydrogen_invalid_MWh = abs(hydrogen_requested_MW - hydrogen_actual_MW) * self.dt
+        hydrogen_invalid_action_cost = hydrogen_invalid_MWh * self.hydrogen_invalid_action_cost_per_MWh
         # 锅炉动作
         boiler_a = float(np.clip(action[1], -1.0, 1.0))
         P_boiler_e = self._boiler_block(boiler_a)
@@ -184,12 +253,13 @@ class BatteryEnvSingle(gym.Env):
         P_HB_h = self._HB_block(HB_a)
 
         # 电力结算
-        net_power = G_L - R + self.P_es - P_CHP_e - P_boiler_e  # MW（不裁零，留给市场清算层处理）
+        net_power = G_L - R + self.P_es + self.P_el - self.P_fc_e - P_CHP_e - P_boiler_e  # MW
         # 热力结算
-        net_heat = H_L - P_CHP_h - P_HB_h
+        net_heat = H_L - P_CHP_h - P_HB_h - self.P_fc_h
 
         # 本地成本（不含购售电；电费由协调器做市场结算）
         soc_cost = self.deg_c * abs(self.P_es)  # 折旧
+        h2_cost = self.h2_operating_cost * (self.P_el + self.P_fc_e) * self.dt
         ##锅炉
         boiler_cost, co2_boiler = self._boiler_cost(P_boiler_e)
         ##CHP成本
@@ -201,7 +271,7 @@ class BatteryEnvSingle(gym.Env):
         a_CHP = CHP_cost / ((P_CHP_h + P_CHP_e) + 0.0000001)
         a_HB = HB_cost / (P_HB_h + 0.0000001)
         # 奖励仅先返回“本地项”，最终奖励由协调器：-(电力结算+本地项)
-        local_cost = soc_cost + boiler_cost + CHP_cost + HB_cost  # 注意 local_pen 已是“奖励加项”，这里减回
+        local_cost = soc_cost + h2_cost + boiler_cost + CHP_cost + HB_cost
         reward_placeholder = 0.0  # 真正 reward 由协调器重算
 
         # 推进内部计步
@@ -210,7 +280,7 @@ class BatteryEnvSingle(gym.Env):
 
         # === 子环境决定：是否售电 / 售电报价（成本×1.1） / 购买外部电价 ===
         # 单位成本近似：以“用于供电的出力”作为分母做加权
-        p_dis = max(0.0, -self.P_es)  # 内部 P_es 为负时放电，计入供电成本分母
+        p_dis = max(0.0, -self.P_es) + self.P_fc_e
         gen = max(0.0, P_boiler_e) + max(0.0, P_CHP_e)  # 锅炉出力
         R_gen = max(0.0, R)
         R_cost = max(0.0, R_gen * 5)
@@ -226,7 +296,7 @@ class BatteryEnvSingle(gym.Env):
             ask_price = None
         else:
             # 单位成本：$/MWh，防爆夹紧（也可用 P 的区间）
-            unit_cost = (soc_cost + boiler_cost + R_cost) / max(1e-3, denom)
+            unit_cost = (soc_cost + h2_cost + boiler_cost + R_cost) / max(1e-3, denom)
             markup = 1.0 + 0.5 * (a_sell + 1.0) / 2.0  # 1.0~1.5
             ask_price = float(np.clip(unit_cost * markup, 0.2 * P, 1.5 * P))
 
@@ -245,12 +315,22 @@ class BatteryEnvSingle(gym.Env):
             "battery_requested_MW": battery_requested_MW,
             "battery_invalid_MWh": battery_invalid_MWh,
             "battery_invalid_action_cost": battery_invalid_action_cost,
+            "hydrogen_invalid_MWh": hydrogen_invalid_MWh,
+            "hydrogen_invalid_action_cost": hydrogen_invalid_action_cost,
+            "storage_type": self.storage_type,
+            "P_el": self.P_el,
+            "P_fc_e": self.P_fc_e,
+            "P_fc_h": self.P_fc_h,
+            "h2_soc": self._hsoc if self.storage_type == "hydrogen" else 0.0,
+            "h2_signed_power_MW": self._h2_signed_power if self.storage_type == "hydrogen" else 0.0,
+            "h2_cost": h2_cost,
+            "terminal_storage_value": 0.0,
             "H_demand": H_L,
             "P_CHP_h": P_CHP_h,
             "P_HB_h": P_HB_h,
             'R_solar': R_solar,
             'R_wind': R_wind,
-            "soc": self._soc,
+            "soc": self._soc if self.storage_type == "battery" and self.es_enabled else 0.0,
             "newpower_gen": R,
             "grid_price": P,
             "net_power_MW": net_power,  # 给协调器做市场清算
@@ -294,13 +374,34 @@ class BatteryEnvSingle(gym.Env):
             self._soc += self.P_es * self.dt / (self.eta_dis * self.E)
         self._soc = float(np.clip(self._soc, self.soc_min, self.soc_max))
 
-    def _H_restore_block(self, a_ch, a_dis):
-        a_ch = (float(np.clip(a_ch, -1.0, 1.0)) + 1.0) / 2.0
-        a_dis = (float(np.clip(a_dis, -1.0, 1.0)) + 1.0) / 2.0
-        eta = 0.02
-        P_ch = 0.3
-        P_dis = 0.3
-        self._hsoc = (1 - eta) * self._hsoc + (P_ch * a_ch - P_dis / a_dis)
+    def _hydrogen_block(self, action: float) -> None:
+        """执行互斥的制氢/燃料电池动作，并按氢的化学能更新储量。
+
+        负动作请求电解槽耗电，正动作请求燃料电池发电；返回值为空。
+        储量以 MWh_H2 计，实际功率受设备额定值和储罐边界共同限制。
+        """
+        if not np.isfinite(action):
+            raise ValueError("氢储能动作必须为有限数值")
+        requested_power = action * (self.P_fc_max if action >= 0 else self.P_el_max)
+        # 氢系统含气体、热管理和辅助设备；按系统级爬坡假设限制相邻小时出力变化。
+        # 有符号功率跨过零点时也受相同约束，电池则不施加这一限制。
+        ramp_width = self.h2_ramp * self.dt
+        signed_power = float(np.clip(requested_power,
+                                     self._h2_signed_power - ramp_width,
+                                     self._h2_signed_power + ramp_width))
+        if signed_power < 0:
+            headroom = (self.h2_soc_max - self._hsoc) * self.E_h2
+            self.P_el = min(-signed_power, headroom / (self.eta_el * self.dt))
+            self._hsoc += self.P_el * self.eta_el * self.dt / self.E_h2
+        elif signed_power > 0:
+            available = (self._hsoc - self.h2_soc_min) * self.E_h2
+            self.P_fc_e = min(signed_power, available * self.eta_fc_e / self.dt)
+            chemical_power = self.P_fc_e / self.eta_fc_e
+            # 余热与电能来自同一份氢化学能，不再计入原有 CHP 出力。
+            self.P_fc_h = chemical_power * self.eta_fc_heat
+            self._hsoc -= chemical_power * self.dt / self.E_h2
+        self._h2_signed_power = self.P_fc_e - self.P_el
+        self._hsoc = float(np.clip(self._hsoc, self.h2_soc_min, self.h2_soc_max))
 
     def _boiler_block(self, a_norm: float):
         u = (float(np.clip(a_norm, -1.0, 1.0)) + 1.0) / 2.0  # u∈[0,1]
@@ -442,7 +543,7 @@ class MultiBatteryCoordinator(gym.Env):
             env.reset(seed=(None if seed is None else (seed + hash(aid) % 9973)))
         self._inject_exogenous_to_all(self.t)
         for aid, env in self.envs.items():
-            obs[aid] = env._make_obs(0.0, 0.0)
+            obs[aid] = env._make_obs(0.0)
         return obs, {}
 
     def step(self, actions: Dict[str, np.ndarray]):
@@ -460,7 +561,7 @@ class MultiBatteryCoordinator(gym.Env):
             trunc_tmp[aid] = trunc
 
         # ==== 电力结算（协调器只做撮合；报价/是否出售由子环境info给出） ====
-        dt_h = 1.0  # 与子环境步长一致；如有不同，可从任一env.dt读取
+        dt_h = next(iter(self.envs.values())).dt
 
         # 1) 收集买卖与报价
         sellers = []  # (ask_price, aid, offer_MW)
@@ -548,7 +649,21 @@ class MultiBatteryCoordinator(gym.Env):
             total_cost = local_cost + elec_cost + heat_cost
             # 单独保留经济成本，处罚仅影响训练奖励，避免混入运行成本统计。
             battery_invalid_action_cost = float(inf.get("battery_invalid_action_cost", 0.0))
-            rew = -(total_cost + battery_invalid_action_cost) / 1000.0
+            hydrogen_invalid_action_cost = float(inf.get("hydrogen_invalid_action_cost", 0.0))
+            # 仅在完整回合末估计剩余储能可回收的电量价值；各储能均以初始容量为基线，
+            # 避免把初始能量重复计成收益。残值只进入奖励，不篡改实际运行成本。
+            terminal_storage_value = 0.0
+            if self.t == self.T - 1:
+                storage_env = self.envs[aid]
+                if storage_env.storage_type == "battery" and storage_env.es_enabled:
+                    recoverable_MWh = max(0.0, storage_env._soc - storage_env.soc_init) * storage_env.E * storage_env.eta_dis
+                elif storage_env.storage_type == "hydrogen":
+                    recoverable_MWh = max(0.0, storage_env._hsoc - storage_env.h2_soc_init) * storage_env.E_h2 * storage_env.eta_fc_e
+                else:
+                    recoverable_MWh = 0.0
+                terminal_storage_value = recoverable_MWh * storage_env.terminal_electricity_value
+            rew = -(total_cost + battery_invalid_action_cost + hydrogen_invalid_action_cost
+                    - terminal_storage_value) / 1000.0
 
             rews[aid] = float(rew)
             ii = dict(inf)
@@ -561,7 +676,8 @@ class MultiBatteryCoordinator(gym.Env):
                 "market_cashflow": market_cash if market_sell_MWh > 0 else -market_cash,  # 卖家为 +收入；买家为 +支出
                 "grid_buy_MWh": grid_buy_MW * dt_h,
                 "surplus_dump_MWh": surplus_MW * dt_h,
-                "total_cost": total_cost
+                "total_cost": total_cost,
+                "terminal_storage_value": terminal_storage_value,
             })
             infos[aid] = ii
 
@@ -577,15 +693,12 @@ class MultiBatteryCoordinator(gym.Env):
                 market_cash = float(infos[aid]["market_cashflow"])
 
                 avg_price = 0.0
-                market_MWH = 0.0
                 if market_buy > 1e-6:
                     avg_price = -market_cash / max(1e-6, market_buy)
-                    market_MWH = -market_buy
                 elif market_sell > 1e-6:
                     avg_price = +market_cash / max(1e-6, market_sell)
-                    market_MWH = market_sell
 
-                obs[aid] = env._make_obs(avg_price, market_MWH)
+                obs[aid] = env._make_obs(avg_price)
 
         else:
             obs = obs_tmp  # 已经到末尾，随便给占位即可

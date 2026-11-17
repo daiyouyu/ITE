@@ -328,11 +328,9 @@ def train_iddpg(
     presets = default_presets()
     missing_devices = Federated and fed_method == 'DSFA' and communication is None
     if missing_devices:
-        # 普通 DSFA 使用缺失设备场景，保留动作维度以兼容联邦参数聚合。
-        # park 1/2/3 分别对应 agent_0/1/2；断联实验已在上方独立处理。
+        # 储能设备统一采用默认预设：park 1/3 电池、park 2 无储能、park 4 氢储能。
+        # 原 DSFA 实验仅保留 park 2 的 CHP 缺失设置。
         park_configs = presets.env_kwargs["per_agent_kwargs"]
-        park_configs["agent_0"]["es_enabled"] = False
-        park_configs["agent_2"]["es_enabled"] = False
         park_configs["agent_1"]["chp_enabled"] = False
     train_series, test_series, T, train_idx, test_idx = load_series_split(
         path1="./data/IES_data/G_demand.csv",

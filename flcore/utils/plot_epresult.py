@@ -230,8 +230,7 @@ def draw_result(
 def main() -> None:
     """读取 ``rew`` 中的全部文件和键，然后生成结果图。"""
     rew = [
-        'D:\\ITE\\result\\20260404\\result_arrays.npz',
-        'D:\\ITE\\result\\20261005\\result_arrays.npz'
+        'result\\CentralizedActor\\result_arrays.npz'
     ]
     reward_data = load_reward_data(rew)
     draw_result(reward_data)

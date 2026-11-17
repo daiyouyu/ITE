@@ -51,6 +51,8 @@ def default_presets() -> Presets:
         # 每 MWh 未能执行的储能请求处罚 100，最终奖励沿用 /1000 缩放。
         # 设为 0 可关闭；不处罚禁用储能的园区，也不影响其他设备动作。
         battery_invalid_action_cost_per_MWh=100.0,
+        # 回合末按可回收电量估值；低于当前样本的最低购电价，避免仅为残值而购电制氢。
+        terminal_electricity_value_per_MWh=200.0,
         obs_norm=True,
         # === 新增：逐 agent 覆盖 ===
         per_agent_kwargs={
@@ -62,7 +64,7 @@ def default_presets() -> Presets:
                         "P_HB_e_h": 15, "P_HB_e_l": 0,
                         },
 
-            "agent_1": {"E_bat_MWh": 5.0, "P_bat_max_MW": 3.0, "deg_cost_per_MW": 0.8,
+            "agent_1": {"storage_type": "none", "es_enabled": False,
                         "CHP_a": 0.76, "CHP_b": 0.4275, "CHP_c": 0.114,
                         "CHP_d": 181.6, "CHP_e": 253.7, "CHP_f": 75,
                         "boiler_a": 0.905, "boiler_b": 273.7, "boiler_c": 75,
@@ -77,7 +79,13 @@ def default_presets() -> Presets:
                         "boiler_E": 8, "cf": 612,
                         "P_HB_e_h": 15, "P_HB_e_l": 0,
                         },
-            "agent_3": {"E_bat_MWh": 8.0, "P_bat_max_MW": 8.0, "deg_cost_per_MW": 1.5,
+            "agent_3": {"storage_type": "hydrogen", "es_enabled": False,
+                        "E_h2_MWh": 72.0, "P_el_max_MW": 3.0, "P_fc_max_MW": 3.0,
+                        "h2_ramp_MW_per_hour": 1.5,
+                        "eta_el": 0.70, "eta_fc_e": 0.50, "eta_fc_heat": 0.30,
+                        "h2_soc_min": 0.10, "h2_soc_max": 0.90, "h2_soc_init": 0.10,
+                        "h2_operating_cost_per_MWh": 5.0,
+                        "hydrogen_invalid_action_cost_per_MWh": 100.0,
                         "CHP_a": 0.6, "CHP_b": 0.5, "CHP_c": 0.108,
                         "CHP_d": 229.2, "CHP_e": 171.9, "CHP_f": 75,
                         "boiler_a": 0.8, "boiler_b": 253, "boiler_c": 75,

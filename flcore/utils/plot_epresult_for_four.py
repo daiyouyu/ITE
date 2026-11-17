@@ -247,7 +247,7 @@ def draw_four_park_results(
             )
 
         ax.set_title(f"园区 {park_index + 1}", fontsize=14, fontweight="bold")
-        ax.set_xlabel("Episode", fontsize=11)
+        ax.set_xlabel("轮次", fontsize=11)
         ax.set_ylabel("日平均费用", fontsize=11)
         ax.grid(True, linestyle="--", alpha=0.35)
         ax.tick_params(axis="both", labelsize=9)
