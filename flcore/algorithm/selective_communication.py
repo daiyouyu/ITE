@@ -19,7 +19,13 @@ def select_neighbors(
         raise ValueError('neighbors 不能为负数')
     if not np.isfinite(distances[candidates]).all():
         raise ValueError('候选动作距离包含非有限数值')
-    count = len(candidates) if strategy == 'all' else min(neighbors, len(candidates))
+    # K=0 保留第一阶段摘要通信，但第二阶段不请求 Actor；自身仍参与聚合。
+    if neighbors == 0:
+        count = 0
+    elif strategy == 'all':
+        count = len(candidates)
+    else:
+        count = min(neighbors, len(candidates))
     ordered = sorted(candidates, key=lambda j: (float(distances[j]), j))
     if strategy in {'all', 'nearest'}:
         return ordered[:count]
