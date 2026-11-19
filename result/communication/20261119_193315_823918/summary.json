@@ -1,0 +1,142 @@
+[
+  {
+    "strategy": "nearest",
+    "neighbors": 0,
+    "seed": 0,
+    "epochs": 1000,
+    "train_days": 1,
+    "rounds": 995,
+    "descriptor_bytes": 382080,
+    "request_bytes": 0,
+    "actor_bytes": 0,
+    "total_bytes": 382080,
+    "final_100_episode_reward_per_park": [
+      -218.7657470703125,
+      -191.24168395996094,
+      -157.1678466796875,
+      -239.9289093017578
+    ],
+    "evaluation_start_hour": 24,
+    "evaluation_hours": 24,
+    "park_costs_cny": {
+      "agent_0": 199754.33432625924,
+      "agent_1": 218474.10262603854,
+      "agent_2": 168082.62502999234,
+      "agent_3": 253489.14053810257
+    },
+    "park_carbon_costs_cny": {
+      "agent_0": 26.834832753187268,
+      "agent_1": 27.978659969498704,
+      "agent_2": 27.018713711726175,
+      "agent_3": 22.776758497038266
+    },
+    "system_cost_cny": 839800.2025203927,
+    "system_carbon_cost_cny": 104.60896493145042,
+    "output": "result/communication/20261119_193315_823918/nearest_k0_seed0"
+  },
+  {
+    "strategy": "nearest",
+    "neighbors": 1,
+    "seed": 0,
+    "epochs": 1000,
+    "train_days": 1,
+    "rounds": 995,
+    "descriptor_bytes": 382080,
+    "request_bytes": 63680,
+    "actor_bytes": 417836320,
+    "total_bytes": 418282080,
+    "final_100_episode_reward_per_park": [
+      -162.71807861328125,
+      -153.35194396972656,
+      -147.67083740234375,
+      -164.6156768798828
+    ],
+    "evaluation_start_hour": 24,
+    "evaluation_hours": 24,
+    "park_costs_cny": {
+      "agent_0": 158489.0904173242,
+      "agent_1": 168857.21841842026,
+      "agent_2": 150109.2103724716,
+      "agent_3": 163150.93275693315
+    },
+    "park_carbon_costs_cny": {
+      "agent_0": 28.572040421540734,
+      "agent_1": 28.402231104675792,
+      "agent_2": 30.383087436851355,
+      "agent_3": 33.8751007938144
+    },
+    "system_cost_cny": 640606.4519651493,
+    "system_carbon_cost_cny": 121.23245975688228,
+    "output": "result/communication/20261119_193315_823918/nearest_k1_seed0"
+  },
+  {
+    "strategy": "nearest",
+    "neighbors": 2,
+    "seed": 0,
+    "epochs": 1000,
+    "train_days": 1,
+    "rounds": 995,
+    "descriptor_bytes": 382080,
+    "request_bytes": 127360,
+    "actor_bytes": 835672640,
+    "total_bytes": 836182080,
+    "final_100_episode_reward_per_park": [
+      -175.15785217285156,
+      -154.79855346679688,
+      -150.60621643066406,
+      -204.07748413085938
+    ],
+    "evaluation_start_hour": 24,
+    "evaluation_hours": 24,
+    "park_costs_cny": {
+      "agent_0": 184397.27121828595,
+      "agent_1": 193066.49331083152,
+      "agent_2": 160549.98370471664,
+      "agent_3": 208079.69488412206
+    },
+    "park_carbon_costs_cny": {
+      "agent_0": 14.107305548420529,
+      "agent_1": 15.741172382151502,
+      "agent_2": 13.061131889821796,
+      "agent_3": 16.70866651434
+    },
+    "system_cost_cny": 746093.4431179562,
+    "system_carbon_cost_cny": 59.61827633473383,
+    "output": "result/communication/20261119_193315_823918/nearest_k2_seed0"
+  },
+  {
+    "strategy": "nearest",
+    "neighbors": 3,
+    "seed": 0,
+    "epochs": 1000,
+    "train_days": 1,
+    "rounds": 995,
+    "descriptor_bytes": 382080,
+    "request_bytes": 191040,
+    "actor_bytes": 1253508960,
+    "total_bytes": 1254082080,
+    "final_100_episode_reward_per_park": [
+      -159.45303344726562,
+      -151.2753448486328,
+      -147.44532775878906,
+      -150.85939025878906
+    ],
+    "evaluation_start_hour": 24,
+    "evaluation_hours": 24,
+    "park_costs_cny": {
+      "agent_0": 159036.10712312013,
+      "agent_1": 172758.83908248437,
+      "agent_2": 165263.16299800546,
+      "agent_3": 162351.54157618908
+    },
+    "park_carbon_costs_cny": {
+      "agent_0": 19.71855048908312,
+      "agent_1": 21.63871776981475,
+      "agent_2": 12.963408107295441,
+      "agent_3": 32.13354710879055
+    },
+    "system_cost_cny": 659409.6507797991,
+    "system_carbon_cost_cny": 86.45422347498386,
+    "output": "result/communication/20261119_193315_823918/nearest_k3_seed0"
+  }
+]
