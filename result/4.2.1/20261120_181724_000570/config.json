@@ -1,0 +1,11 @@
+{
+  "algorithms": [
+    "IDDPG",
+    "MADDPG",
+    "FedAvg",
+    "DSFA"
+  ],
+  "epochs": 10000,
+  "train_days": 1,
+  "seed": 0
+}
