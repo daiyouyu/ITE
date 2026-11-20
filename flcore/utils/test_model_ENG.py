@@ -239,12 +239,7 @@ H_COLORS = {
     'demand': '#C0392B'
 }
 
-AGENT_PROFILE_NAMES = [
-    "Residential Area",
-    "Renewable Energy Park",
-    "Residential Area",
-    "Industrial Park",
-]
+AGENT_PROFILE_NAMES = ["IES 1", "IES 2", "IES 3", "IES 4"]
 
 plt.rcParams.update({
     'font.family': 'sans-serif',
@@ -264,7 +259,7 @@ def _agent_profile_name(agent_id: str, fallback_idx: int) -> str:
         idx = fallback_idx
     if 0 <= idx < len(AGENT_PROFILE_NAMES):
         return AGENT_PROFILE_NAMES[idx]
-    return f"Agent {fallback_idx + 1}"
+    return f"IES {fallback_idx + 1}"
 
 
 def _set_hour_ticks(ax, hours: int) -> None:
@@ -339,14 +334,14 @@ def _plot_electric_balance(ax,
         # 绘制顺序即正向堆叠的自下而上顺序：先可再生能源，最后外部电网。
         ('Solar Power', np.asarray(series.get('R_solar', zeros), dtype=np.float32), E_COLORS['R_solar']),
         ('Wind Power', np.asarray(series.get('R_wind', zeros), dtype=np.float32), E_COLORS['R_wind']),
-        ('CHP Electric Output', np.asarray(series.get('P_CHP_e', zeros), dtype=np.float32), E_COLORS['P_CHP_e']),
-        ('Electric Boiler Output', np.asarray(series.get('boiler', zeros), dtype=np.float32), E_COLORS['boiler']),
+        ('CHP Electric', np.asarray(series.get('P_CHP_e', zeros), dtype=np.float32), E_COLORS['P_CHP_e']),
+        ('TPB', np.asarray(series.get('boiler', zeros), dtype=np.float32), E_COLORS['boiler']),
         # 电池统一配色：正值为放电供能，负值为充电耗能。
-        ('Battery Storage',
+        ('EES',
          np.asarray(series.get('bat_dis', zeros), dtype=np.float32)
          - np.asarray(series.get('bat_charge', zeros), dtype=np.float32), E_COLORS['battery']),
         # 发电为正、制氢耗电为负，和电池充放电使用相同的功率符号口径。
-        ('Hydrogen Storage',
+        ('HES',
          np.asarray(series.get('P_fc_e', zeros), dtype=np.float32)
          - np.asarray(series.get('P_el', zeros), dtype=np.float32), E_COLORS['hydrogen']),
         # P2P 使用净交易功率：正值为购买，负值为出售，共用一个颜色和图例。
@@ -370,6 +365,8 @@ def _plot_electric_balance(ax,
     _set_hour_ticks(ax, hours)
     _apply_reference_style(ax, y_label='Power (MW)')
     ax.set_xlabel("Hour (h)", labelpad=6)
+    if panel_caption:
+        ax.set_title(panel_caption, fontsize=18, pad=12)
 
     y_values = [np.asarray(series[demand_key], dtype=np.float32)] + [np.asarray(v, dtype=np.float32) for _, v, _ in
                                                                      components]
@@ -417,6 +414,8 @@ def _plot_thermal_balance(ax,
     _set_hour_ticks(ax, hours)
     _apply_reference_style(ax, y_label='Power (MW)')
     ax.set_xlabel("Hour (h)", labelpad=6)
+    if panel_caption:
+        ax.set_title(panel_caption, fontsize=18, pad=12)
 
     y_values = [np.asarray(series['H_demand'], dtype=np.float32)] + [np.asarray(v, dtype=np.float32) for _, v, _ in
                                                                      components]
@@ -437,10 +436,10 @@ def _plot_thermal_balance(ax,
 
 
 def plot_daily_stack(agg: Dict[str, np.ndarray],
-                     title: str = "Diurnal Electrical Power Balance Components (MW)",
+                     title: str = "IES Electrical Power Balance (MW)",
                      save_path: str = "daily_supply_stack.png") -> None:
     fig, ax = plt.subplots(figsize=(14, 7), dpi=300)
-    _plot_electric_balance(ax, agg, demand_key='demand', panel_caption="", show_legend=True)
+    _plot_electric_balance(ax, agg, demand_key='demand', panel_caption=title, show_legend=True)
     plt.tight_layout()
     plt.savefig(save_path, dpi=300, bbox_inches='tight')
     plt.close(fig)
@@ -467,7 +466,7 @@ def plot_daily_stack_per_agent(per: Dict[str, Dict[str, np.ndarray]],
 
 def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
                                     save_path: str = "daily_agents_grid.png",
-                                    title: str = "Diurnal Electrical Power Balance by Agent (MW)") -> str:
+                                    title: str = "Diurnal Electrical Power Balance by IES (MW)") -> str:
     agent_ids = list(per.keys())
     n = len(agent_ids)
     import math
@@ -509,7 +508,7 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
 
 def plot_daily_stack_per_agent_H_grid(per: Dict[str, Dict[str, np.ndarray]],
                                       save_path: str = "daily_agents_grid.png",
-                                      title: str = "Diurnal Thermal Power Balance by Agent (MW)") -> str:
+                                      title: str = "Diurnal Thermal Power Balance by IES (MW)") -> str:
     agent_ids = list(per.keys())
     n = len(agent_ids)
     import math
@@ -560,18 +559,19 @@ def export_battery_evaluation(per: Dict[str, Dict[str, np.ndarray]],
     path = os.path.join(save_dir, 'battery_evaluation.csv')
     with open(path, 'w', newline='', encoding='utf-8-sig') as stream:
         writer = csv.writer(stream)
-        writer.writerow(['agent', 'hour', 'es_enabled', 'action', 'charge_MW',
+        writer.writerow(['agent', 'ies', 'hour', 'es_enabled', 'action', 'charge_MW',
                          'discharge_MW', 'soc', 'market_buy_MW', 'market_sell_MW'])
-        for aid, series in per.items():
+        for idx, (aid, series) in enumerate(per.items()):
+            ies_name = _agent_profile_name(aid, idx)
             enabled = (park_configs[aid].get('storage_type', 'battery') == 'battery'
                        and park_configs[aid].get('es_enabled', True))
             charge = float(series['bat_charge'].sum()) * dt_hours
             discharge = float(series['bat_dis'].sum()) * dt_hours
-            print(f"{aid}: ES={enabled}, charge={charge:.4f} MWh, discharge={discharge:.4f} MWh")
+            print(f"{ies_name}: ES={enabled}, charge={charge:.4f} MWh, discharge={discharge:.4f} MWh")
             if enabled and max(charge, discharge) < 1e-6:
-                print(f"{aid}: 储能已启用但无实际充放电，请检查策略动作、SOC 边界及是否已按新动作定义重新训练。")
+                print(f"{ies_name}: 储能已启用但无实际充放电，请检查策略动作、SOC 边界及是否已按新动作定义重新训练。")
             for hour in range(len(series['soc'])):
-                writer.writerow([aid, f'{hour:02d}:00', enabled,
+                writer.writerow([aid, ies_name, f'{hour:02d}:00', enabled,
                                  float(series['battery_action'][hour]) if enabled else 0.0,
                                  float(series['bat_charge'][hour]), float(series['bat_dis'][hour]),
                                  float(series['soc'][hour]), float(series['market_buy'][hour]),
@@ -581,7 +581,7 @@ def export_battery_evaluation(per: Dict[str, Dict[str, np.ndarray]],
 def export_hydrogen_evaluation(series: Dict[str, np.ndarray],
                                dt_hours: float,
                                save_dir: str) -> str:
-    """导出 park 4 的逐小时制氢、发电、余热和储氢比例。
+    """导出 IES 4 的逐小时制氢、发电、余热和储氢比例。
 
     series 为单次评估轨迹，dt_hours 用于汇总 MWh；返回 CSV 路径。
     若策略未使用氢设备，仍导出全零功率，便于辨别设备可用与策略未调用。
@@ -599,18 +599,18 @@ def export_hydrogen_evaluation(series: Dict[str, np.ndarray],
                              float(series['P_fc_h'][hour]), float(series['h2_soc'][hour]),
                              float(series['h2_cost'][hour]), float(series['h_grid_buy'][hour]),
                              float(series['terminal_storage_value'][hour])])
-    print(f"Park 4 hydrogen: electrolysis={series['P_el'].sum() * dt_hours:.4f} MWh, "
+    print(f"IES 4 hydrogen: electrolysis={series['P_el'].sum() * dt_hours:.4f} MWh, "
           f"electricity={series['P_fc_e'].sum() * dt_hours:.4f} MWh, "
           f"recovered heat={series['P_fc_h'].sum() * dt_hours:.4f} MWh")
     if np.allclose(series['P_el'], 0) and np.allclose(series['P_fc_e'], 0):
         positive_actions = int(np.count_nonzero(series['battery_action'] > 0))
-        print(f"Park 4 hydrogen inactive: {positive_actions}/{len(series['battery_action'])} "
+        print(f"IES 4 hydrogen inactive: {positive_actions}/{len(series['battery_action'])} "
               "hours requested discharge; check initial SOC and policy training")
     return path
 
 
 def plot_hydrogen_operation(series: Dict[str, np.ndarray], save_path: str) -> str:
-    """绘制 park 4 的电热出力、储氢比例和策略动作，返回图片路径。
+    """绘制 IES 4 的电热出力、储氢比例和策略动作，返回图片路径。
 
     正功率表示燃料电池供给，负功率表示电解槽耗电；储氢比例独立成图，
     避免将无量纲 SOC 与 MW 功率放在同一坐标轴上。无实际出力时
@@ -618,6 +618,7 @@ def plot_hydrogen_operation(series: Dict[str, np.ndarray], save_path: str) -> st
     """
     x = np.arange(len(series['h2_soc']))
     fig, axes = plt.subplots(4, 1, figsize=(14, 15), sharex=True, dpi=200)
+    fig.suptitle('IES 4 Hydrogen Storage Operation', fontsize=20)
     axes[0].bar(x, series['P_fc_e'], color=E_COLORS['hydrogen'], label='Fuel Cell Electricity')
     axes[0].bar(x, -series['P_el'], color='#E67E22', label='Electrolyzer Consumption')
     axes[0].set_ylabel('Electric Power (MW)')
@@ -644,7 +645,7 @@ def plot_hydrogen_operation(series: Dict[str, np.ndarray], save_path: str) -> st
     for ax in axes:
         ax.grid(axis='y', alpha=0.3)
         _set_hour_ticks(ax, len(x))
-    fig.tight_layout()
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(save_path, bbox_inches='tight')
     plt.close(fig)
     return save_path
@@ -751,10 +752,10 @@ def test_model_and_plot(algo: str = "iddpg",
     saved_files = plot_daily_stack_per_agent(per, save_dir=f"{savefile}", filename_prefix="daily_agent_")
 
     G_grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"{savefile}/daily_agents_Fed{Fed}.png",
-                                                  title=f"Test Day {selected_day + 1}: Diurnal Electrical Power Balance by Agent (MW)")
+                                                  title=f"Test Day {selected_day + 1}: Diurnal Electrical Power Balance by IES (MW)")
 
     H_grid_path = plot_daily_stack_per_agent_H_grid(per, save_path=f"{savefile}/H_daily_agents_Fed{Fed}.png",
-                                                    title=f"Test Day {selected_day + 1}: Diurnal Thermal Power Balance by Agent (MW)")
+                                                    title=f"Test Day {selected_day + 1}: Diurnal Thermal Power Balance by IES (MW)")
 
     print("Saved plot -> daily_supply_stack.png")
     print(f"Saved hydrogen data -> {hydrogen_csv}")
@@ -777,7 +778,7 @@ if __name__ == "__main__":
     _, rewards, co2_costs = test_model_and_plot(train=args.train_days,
                                                 plot_day_offset=args.plot_day_offset)
     print(f"Total Cumulative Reward: {sum(rewards)}")
-    print("CO2 Emission Costs for each Agent:")
-    for agent, cost in co2_costs.items():
-        print(f"  Agent {agent}: {cost:.2f}")
-    print(f"  System Total: {sum(co2_costs.values()):.2f}")
+    print("CO2 Emission Costs for each IES:")
+    for idx, (agent, cost) in enumerate(co2_costs.items()):
+        print(f"  {_agent_profile_name(agent, idx)}: {cost:.2f}")
+    print(f"  IES System Total: {sum(co2_costs.values()):.2f}")

@@ -286,12 +286,12 @@ class IDDPG:
         self.replay.buffer = deque(state["replay"], maxlen=self.replay.max_size)
         self.proto_history = state["proto_history"]
 
-    def save_to_directory(self, directory):
+    def save_to_directory(self, directory, fed: bool = True):
         """保存分支模型参数至独立目录，沿用原模型文件命名规则。"""
         os.makedirs(directory, exist_ok=True)
         for i in range(self.n_agents):
-            torch.save(self.actors[i].state_dict(), os.path.join(directory, f"True_actor_{i}.pth"))
-            torch.save(self.critics[i].state_dict(), os.path.join(directory, f"True_critic_{i}.pth"))
+            torch.save(self.actors[i].state_dict(), os.path.join(directory, f"{fed}_actor_{i}.pth"))
+            torch.save(self.critics[i].state_dict(), os.path.join(directory, f"{fed}_critic_{i}.pth"))
 
     def load(self, prefix="iddpg",Fed=False):
         for i in range(self.n_agents):

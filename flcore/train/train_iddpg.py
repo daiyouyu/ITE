@@ -227,6 +227,8 @@ def train_iddpg(
     disconnect_schedule: tuple[tuple[int, int], ...] = ((200, 400), (600, 800)),
     snapshot_ref: bytes | None = None,
     output_root: str = ".",
+    experiment_dir: str | None = None,
+    missing_devices_experiment: bool = True,
 ):
     """训练 IDDPG；断联实验按正常、断联两个阶段调用，共享第 200 轮内存状态。
 
@@ -326,7 +328,8 @@ def train_iddpg(
 
     # --- Setup ---
     presets = default_presets()
-    missing_devices = Federated and fed_method == 'DSFA' and communication is None
+    missing_devices = (missing_devices_experiment and Federated
+                       and fed_method == 'DSFA' and communication is None)
     if missing_devices:
         # 储能设备统一采用默认预设：park 1/3 电池、park 2 无储能、park 4 氢储能。
         # 原 DSFA 实验仅保留 park 2 的 CHP 缺失设置。
@@ -444,7 +447,12 @@ def train_iddpg(
     env.close()
     # Save the model
     model_prefix = "missing_DSFA" if missing_devices else f"iddpg_{fed_method}"
-    if communication is not None:
+    if experiment_dir is not None:
+        run_dir = Path(experiment_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        iddpg.save_to_directory(str(run_dir / 'models'), fed=Federated)
+        np.savez(run_dir / 'rewards.npz', rewards=np.asarray(rewards).T)
+    elif communication is not None:
         run_dir = Path(output_root)
         run_dir.mkdir(parents=True, exist_ok=True)
         iddpg.save_to_directory(str(run_dir / 'models'))
@@ -462,7 +470,7 @@ def train_iddpg(
             np.savez(result_dir / 'result_arrays.npz', DSFA=np.asarray(rewards).T)
 
     # --- Save Federation Weights ---
-    if federation_weights_history and communication is None:
+    if federation_weights_history and communication is None and experiment_dir is None:
         # Create a directory for today's results if it doesn't exist
         now_date = dt.now().strftime('%Y%m%d')
         save_dir = os.path.join('result', 'missing' if missing_devices else now_date)

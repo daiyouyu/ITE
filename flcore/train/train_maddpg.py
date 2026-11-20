@@ -3,12 +3,16 @@ from flcore.train.train_common import (
     infer_dims, list_by_agents, flatten_obs, flatten_actions
 )
 from flcore.algorithm.MADDPG import MADDPG
+from flcore.Env.multi_env import MultiBatteryCoordinator
 from flcore.utils.print_epreward import format_episode_info
+from pathlib import Path
 import numpy as np
 import time
 
 
-def train_maddpg(episodes=1000, train=7, test=1, Federated=True, ):
+def train_maddpg(episodes=1000, train=7, test=1, Federated=True,
+                 experiment_dir: str | None = None):
+    """训练 MADDPG，并可将模型和逐轮奖励保存到独立实验目录。"""
     # --- 统一使用公共预设 ---
     # 使用同一套公共预设
     presets = default_presets()  # 'weekly' / 'fast_debug' / 'monthly'
@@ -18,7 +22,8 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True, ):
         train_days=train,
         test_days=test
     )
-    env, test_env = build_envs(train_series, test_series, presets.env_kwargs)
+    # 当前训练流程不使用测试环境；test=0 时测试序列为空。
+    env = MultiBatteryCoordinator(train_series, **presets.env_kwargs)
 
     # 维度探测（公共函数）
     obs_dims, action_dims, max_actions, agents = infer_dims(env)
@@ -29,6 +34,7 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True, ):
     )
 
     rewards_record, rewards, test_rewards = [], [], []
+    total_steps = 0
 
     for ep in range(episodes):
         start_time = time.time()
@@ -62,7 +68,7 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True, ):
             obs_list = list_by_agents(obs, agents)
 
             # 统一探索策略：前若干步强探索，后续降噪
-            if t < presets.noise_warmup_steps:
+            if total_steps < presets.noise_warmup_steps:
                 actions_list = [env.action_spaces[a].sample() for a in agents]
             else:
                 noise_scale = 0.3 * (1 - t / horizon)
@@ -80,10 +86,11 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True, ):
             joint_next_obs = flatten_obs(next_obs_list)
 
             maddpg.replay.add(joint_obs, joint_actions, rew_list, joint_next_obs, done_list)
-            if t % 3 == 0:
+            total_steps += 1
+            if total_steps % 3 == 0:
                 maddpg.update()
             if Federated:
-                if t % 24 == 0:
+                if total_steps % 24 == 0:
                     maddpg.Fed_Aggergate()
             obs = next_obs
             ep_rew += np.array(rew_list, dtype=np.float32)
@@ -114,11 +121,17 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True, ):
                 break
 
         # 与原实现保持一致的“按小时归一后*24”的口径
-        rewards.append((ep_rew / max(1, t)) * 24)
+        rewards.append((ep_rew / (t + 1)) * 24)
         ep_time = (time.time() - start_time) / 60
         print(f"Fed:{Federated}_maddpg\n当前轮次时间: {ep_time:.3f}分钟,预计剩余时间：{ep_time * (episodes - ep):.3f}")
-        print(format_episode_info(ep, (ep_rew / max(1, t)) * 24, ep_info[0]))
+        print(format_episode_info(ep, (ep_rew / (t + 1)) * 24, ep_info[0]))
 
     env.close()
-    maddpg.save("maddpg", Fed=Federated)
+    if experiment_dir is None:
+        maddpg.save("maddpg", Fed=Federated)
+    else:
+        run_dir = Path(experiment_dir)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        maddpg.save_to_directory(str(run_dir / "models"), fed=Federated)
+        np.savez(run_dir / "rewards.npz", rewards=np.asarray(rewards).T)
     return rewards, test_rewards

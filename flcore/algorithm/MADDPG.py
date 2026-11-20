@@ -305,6 +305,13 @@ class MADDPG:
             torch.save(self.actors[i].state_dict(), f"{file_path}/{Fed}_actor_{i}.pth")
             torch.save(self.critics[i].state_dict(), f"{file_path}/{Fed}_critic_{i}.pth")
 
+    def save_to_directory(self, directory: str, fed: bool = False) -> None:
+        """将所有园区的 Actor 与 Critic 保存到指定实验目录。"""
+        os.makedirs(directory, exist_ok=True)
+        for index in range(self.n_agents):
+            torch.save(self.actors[index].state_dict(), os.path.join(directory, f"{fed}_actor_{index}.pth"))
+            torch.save(self.critics[index].state_dict(), os.path.join(directory, f"{fed}_critic_{index}.pth"))
+
     def load(self, prefix="maddpg", Fed=False):
         for i in range(self.n_agents):
             self.actors[i].load_state_dict(
