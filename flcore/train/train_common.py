@@ -112,23 +112,31 @@ def default_presets() -> Presets:
 # ---------- 数据与环境 ----------
 def load_series_split(path1="./data/IES_data/G_demand.csv",
                       path2="./data/IES_data/H_demand.csv",
-                      train_days=7, test_days=1):
+                      train_days=7, test_days=1, train_start_date: str | None = None):
+    """切分训练与测试数据；指定日期时从该日零点连续取训练天数。"""
     data = load_ITE_data(path1, path2)
     T = len(data[0]["P"])
-    days = (train_days + test_days) * 24
-    start_day = datetime(2019, 1, 1)
-    print(start_day.weekday())
-    hour_weekdays = []
-    for hour in range(days):
-        current_time = start_day + timedelta(hours=hour)
-        hour_weekdays.append(current_time.weekday())
-
-    # data = load_power_data(path)
-
-    train_idx = [i for i, wd in enumerate(hour_weekdays) if wd in {1, 2, 3, 4, 5}]
-    # train_idx = train_days * 24
-    # test_idx = (train_days + test_days) * 24
-    test_idx = [i for i, wd in enumerate(hour_weekdays) if wd in {0, 6}]
+    if train_start_date is not None:
+        start_date = datetime.fromisoformat(train_start_date).date()
+        timestamps = np.asarray(data[0]["datetime"], dtype="datetime64[h]")
+        matches = np.flatnonzero(timestamps == np.datetime64(start_date.isoformat()))
+        if len(matches) != 1:
+            raise ValueError(f"数据中未找到训练日期零点: {train_start_date}")
+        start = int(matches[0])
+        end = start + train_days * 24
+        if end > T or not np.array_equal(
+            timestamps[start:end],
+            np.arange(timestamps[start], timestamps[start] + np.timedelta64(train_days * 24, "h")),
+        ):
+            raise ValueError(f"训练日期后的数据不足或时间不连续: {train_start_date}")
+        train_idx = list(range(start, end))
+        test_idx = []
+    else:
+        days = (train_days + test_days) * 24
+        start_day = datetime(2019, 1, 1)
+        hour_weekdays = [(start_day + timedelta(hours=hour)).weekday() for hour in range(days)]
+        train_idx = [i for i, wd in enumerate(hour_weekdays) if wd in {1, 2, 3, 4, 5}]
+        test_idx = [i for i, wd in enumerate(hour_weekdays) if wd in {0, 6}]
 
     train_series = []
     test_series = []

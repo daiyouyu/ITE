@@ -229,6 +229,7 @@ def train_iddpg(
     output_root: str = ".",
     experiment_dir: str | None = None,
     missing_devices_experiment: bool = True,
+    train_start_date: str | None = None,
 ):
     """训练 IDDPG；断联实验按正常、断联两个阶段调用，共享第 200 轮内存状态。
 
@@ -339,7 +340,8 @@ def train_iddpg(
         path1="./data/IES_data/G_demand.csv",
         path2="./data/IES_data/H_demand.csv",
         train_days=train,
-        test_days=test
+        test_days=test,
+        train_start_date=train_start_date,
     )
     # 普通训练只使用训练环境；test=0 时不能构造空测试序列环境。
     env = MultiBatteryCoordinator(train_series, **presets.env_kwargs)

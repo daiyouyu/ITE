@@ -23,19 +23,27 @@ def main() -> None:
                         help="指定算法；可重复传入，默认运行全部四种")
     parser.add_argument("--epochs", type=int, default=1000, help="每种算法的训练轮数")
     parser.add_argument("--train-days", type=int, default=1, help="训练数据天数，默认一天")
+    parser.add_argument("--train-date", type=str,
+                        help="训练起始日期（YYYY-MM-DD）；指定后连续取当天起的训练数据，包括周末")
     parser.add_argument("--seed", type=int, default=0, help="随机种子")
     parser.add_argument("--output", type=Path,
                         help="输出目录；默认按时间生成 result/4.2.1 下的新目录")
     args = parser.parse_args()
     if args.epochs < 1 or args.train_days < 1:
         parser.error("--epochs 和 --train-days 必须为正整数")
+    if args.train_date is not None:
+        try:
+            datetime.strptime(args.train_date, "%Y-%m-%d")
+        except ValueError:
+            parser.error("--train-date 必须为 YYYY-MM-DD 格式")
 
     algorithms = list(dict.fromkeys(args.run or ALGORITHMS))
     output = args.output or Path("result/4.2.1") / datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     output.mkdir(parents=True, exist_ok=False)
     (output / "config.json").write_text(
         json.dumps({"algorithms": algorithms, "epochs": args.epochs,
-                    "train_days": args.train_days, "seed": args.seed},
+                    "train_days": args.train_days, "train_date": args.train_date,
+                    "seed": args.seed},
                    ensure_ascii=False, indent=2), encoding="utf-8")
 
     for algorithm in algorithms:
@@ -49,16 +57,17 @@ def main() -> None:
         print(f"开始训练 {algorithm}，输出目录：{run_dir}", flush=True)
         if algorithm == "IDDPG":
             train_iddpg(args.epochs, args.train_days, 0, False,
-                        experiment_dir=str(run_dir))
+                        experiment_dir=str(run_dir), train_start_date=args.train_date)
         elif algorithm == "MADDPG":
             train_maddpg(args.epochs, args.train_days, 0, False,
-                         experiment_dir=str(run_dir))
+                         experiment_dir=str(run_dir), train_start_date=args.train_date)
         elif algorithm == "FedAvg":
             train_iddpg(args.epochs, args.train_days, 0, True, "FedAvg",
-                        experiment_dir=str(run_dir))
+                        experiment_dir=str(run_dir), train_start_date=args.train_date)
         else:
             train_iddpg(args.epochs, args.train_days, 0, True, "DSFA",
-                        experiment_dir=str(run_dir), missing_devices_experiment=False)
+                        experiment_dir=str(run_dir), missing_devices_experiment=False,
+                        train_start_date=args.train_date)
     print(f"4.2.1 训练完成：{output}", flush=True)
 
 

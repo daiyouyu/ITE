@@ -1,4 +1,5 @@
 from load_data import load_ITE_data
+from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import matplotlib as mpl
@@ -9,8 +10,9 @@ mpl.rcParams["font.family"] = "sans-serif"
 plt.rcParams['axes.unicode_minus'] = False
 plt.rcParams['lines.linewidth'] = 3
 
-path1 = "IES_data/G_demand.csv"
-path2 = "IES_data/H_demand.csv"
+data_dir = Path(__file__).resolve().parent
+path1 = data_dir / "IES_data" / "G_demand.csv"
+path2 = data_dir / "IES_data" / "H_demand.csv"
 data = load_ITE_data(path1, path2)
 for d in data:
     if 'sin_h' in d:
@@ -173,7 +175,8 @@ def view_P_data():
     # plt.show()
 
 
-def view_R_data():
+def view_R_data() -> None:
+    """绘制训练首日四个园区的 24 小时风光发电量并保存英文图。"""
     import matplotlib.ticker as ticker
     # 创建独立画布，避免影响其他图表。用于论文的图表应保证高清晰度
     fig_r, axes_r = plt.subplots(nrows=2, ncols=2, figsize=(16, 12), dpi=600)
@@ -245,12 +248,16 @@ def view_R_data():
 
     plt.tight_layout()
     plt.subplots_adjust(hspace=0.2)
-    plt.savefig('./figure/ITE_R_data_ENG.png', dpi=900, bbox_inches='tight')
-    print("Saved plot -> ./figure/ITE_R_data_ENG.png")
+    output_dir = data_dir / "figure"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / "ITE_R_data_ENG.png"
+    plt.savefig(output_path, dpi=900, bbox_inches='tight')
+    print(f"Saved plot -> {output_path}")
+    plt.close(fig_r)
     # plt.show()
 
 
 if __name__ == '__main__':
-    view_HGR_data()
+    # view_HGR_data()
     # view_P_data()
-    # view_R_data()
+    view_R_data()

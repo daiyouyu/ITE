@@ -11,7 +11,8 @@ import time
 
 
 def train_maddpg(episodes=1000, train=7, test=1, Federated=True,
-                 experiment_dir: str | None = None):
+                 experiment_dir: str | None = None,
+                 train_start_date: str | None = None):
     """训练 MADDPG，并可将模型和逐轮奖励保存到独立实验目录。"""
     # --- 统一使用公共预设 ---
     # 使用同一套公共预设
@@ -20,7 +21,8 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True,
         path1="./data/IES_data/G_demand.csv",
         path2="./data/IES_data/H_demand.csv",
         train_days=train,
-        test_days=test
+        test_days=test,
+        train_start_date=train_start_date,
     )
     # 当前训练流程不使用测试环境；test=0 时测试序列为空。
     env = MultiBatteryCoordinator(train_series, **presets.env_kwargs)
