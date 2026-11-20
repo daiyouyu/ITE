@@ -10,32 +10,29 @@ from datetime import datetime
 from pathlib import Path
 
 
-def evaluate_next_day(model_directory: Path, train_days: int) -> dict:
-    """在训练区间之后的 24 小时无噪声评估模型。
+def evaluate_training_day(model_directory: Path, train_start_date: str | None = None) -> dict:
+    """在训练数据首日的 24 小时内无噪声评估模型。
 
     Args:
         model_directory: 当前实验保存的 Actor 权重目录。
-        train_days: 训练所用的连续天数，用于确定评估日的起点。
 
     Returns:
         包含评估日索引、各园区总成本与碳税成本，以及系统汇总成本的字典。
 
     Raises:
-        ValueError: 数据不足以覆盖完整的下一天时抛出。
+        ValueError: 数据不足以覆盖完整的训练首日时抛出。
     """
     import numpy as np
     import torch
-    from data.load_data import load_ITE_data
     from flcore.Env.multi_env import MultiBatteryCoordinator
-    from flcore.train.train_common import default_presets, infer_dims, list_by_agents
+    from flcore.train.train_common import (default_presets, infer_dims,
+                                           list_by_agents, load_series_split)
     from flcore.algorithm.IDDPG import IDDPG
 
-    series = load_ITE_data('./data/IES_data/G_demand.csv', './data/IES_data/H_demand.csv')
-    start = train_days * 24
-    end = start + 24
-    if any(len(park['P']) < end for park in series):
-        raise ValueError(f'评估数据不足 24 小时: start={start}, end={end}')
-    eval_series = [{key: values[start:end] for key, values in park.items()} for park in series]
+    eval_series, _, _, train_indices, _ = load_series_split(
+        train_days=1, test_days=0, train_start_date=train_start_date)
+    if len(train_indices) != 24:
+        raise ValueError(f'评估数据不足 24 小时: {len(train_indices)}')
     presets = default_presets()
     env = MultiBatteryCoordinator(eval_series, **presets.env_kwargs)
     try:
@@ -62,7 +59,8 @@ def evaluate_next_day(model_directory: Path, train_days: int) -> dict:
             if all(bool(terminated[agent]) or bool(truncated[agent]) for agent in agents):
                 break
         return {
-            'evaluation_start_hour': start,
+            'evaluation_start_hour': train_indices[0],
+            'evaluation_date': str(eval_series[0]['datetime'][0])[:10],
             'evaluation_hours': steps,
             'park_costs_cny': park_costs,
             'park_carbon_costs_cny': park_carbon_costs,
@@ -74,8 +72,9 @@ def evaluate_next_day(model_directory: Path, train_days: int) -> dict:
 
 
 def run_experiment(strategy: str, neighbors: int, seed: int, epochs: int,
-                   train_days: int, output: str) -> dict:
-    """在独立进程训练一组配置，并保存通信与次日评估结果。
+                   train_days: int, output: str,
+                   train_start_date: str | None = None) -> dict:
+    """在独立进程训练一组配置，并保存通信与训练首日评估结果。
 
     Args:
         strategy: 邻居选择策略。
@@ -86,7 +85,7 @@ def run_experiment(strategy: str, neighbors: int, seed: int, epochs: int,
         output: 本批实验的输出目录。
 
     Returns:
-        包含通信字节、末段训练奖励和次日成本的画图汇总数据。
+        包含通信字节、末段训练奖励和训练首日成本的画图汇总数据。
     """
     import numpy as np
     import torch
@@ -105,17 +104,18 @@ def run_experiment(strategy: str, neighbors: int, seed: int, epochs: int,
         with redirect_stdout(log), redirect_stderr(log):
             train_iddpg(epochs, train_days, 0, True, 'DSFA',
                         communication=dict(strategy=strategy, neighbors=neighbors, seed=seed),
-                        output_root=str(directory))
+                        output_root=str(directory), train_start_date=train_start_date,
+                        action_seed=seed)
     records = json.loads((directory / 'communication.json').read_text(encoding='utf-8'))['rounds']
     with np.load(directory / 'rewards.npz') as reward_file:
         rewards = reward_file['DSFA']
-    evaluation = evaluate_next_day(directory / 'models', train_days)
+    evaluation = evaluate_training_day(directory / 'models', train_start_date)
     (directory / 'evaluation.json').write_text(
         json.dumps(evaluation, indent=2, ensure_ascii=False), encoding='utf-8'
     )
     return dict(
         strategy=strategy, neighbors=neighbors, seed=seed, epochs=epochs,
-        train_days=train_days, rounds=len(records),
+        train_days=train_days, train_date=train_start_date, rounds=len(records),
         descriptor_bytes=sum(r['descriptor_bytes'] for r in records),
         request_bytes=sum(r['request_bytes'] for r in records),
         actor_bytes=sum(r['actor_bytes'] for r in records),
@@ -134,12 +134,18 @@ def main() -> None:
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--seeds', nargs='+', type=int,
                         help='可选：一次运行多个随机种子；指定后覆盖 --seed')
-    parser.add_argument('--epochs', type=int, default=1000)
+    parser.add_argument('--epochs', type=int, default=10000)
     parser.add_argument('--train-days', type=int, default=1)
+    parser.add_argument('--train-date', default='2019-06-30',
+                        help='训练和评估日期，默认与 4.2.1 批次一致')
     parser.add_argument('--workers', type=int, default=4)
     args = parser.parse_args()
     if min(args.epochs, args.train_days, args.workers) <= 0:
         parser.error('epochs、train-days 和 workers 必须为正')
+    try:
+        datetime.strptime(args.train_date, '%Y-%m-%d')
+    except ValueError:
+        parser.error('--train-date 必须为 YYYY-MM-DD 格式')
     os.chdir(Path(__file__).resolve().parent)
     seeds = list(dict.fromkeys(args.seeds if args.seeds is not None else [args.seed]))
     jobs = [(s, k, seed) for seed in seeds
@@ -153,7 +159,8 @@ def main() -> None:
     print(f'并行进程: {workers}；数据: {args.train_days} 天；结果: {directory}', flush=True)
     with ProcessPoolExecutor(max_workers=workers, mp_context=mp.get_context('spawn')) as pool:
         futures = [pool.submit(run_experiment, s, k, seed, args.epochs,
-                               args.train_days, str(directory)) for s, k, seed in jobs]
+                               args.train_days, str(directory), args.train_date)
+                   for s, k, seed in jobs]
         for future in as_completed(futures):
             result = future.result()
             results.append(result)
@@ -161,7 +168,8 @@ def main() -> None:
             with (directory / 'plot_data.csv').open('w', newline='', encoding='utf-8') as stream:
                 fieldnames = ['strategy', 'neighbors', 'seed', 'epochs', 'train_days',
                               'rounds', 'descriptor_bytes', 'request_bytes', 'actor_bytes',
-                              'total_bytes', 'evaluation_start_hour', 'evaluation_hours',
+                              'total_bytes', 'evaluation_start_hour', 'evaluation_date',
+                              'evaluation_hours',
                               'system_cost_cny', 'system_carbon_cost_cny',
                               *[f'agent_{index}_final_100_episode_reward' for index in range(4)],
                               *[f'agent_{index}_cost_cny' for index in range(4)],

@@ -230,6 +230,7 @@ def train_iddpg(
     experiment_dir: str | None = None,
     missing_devices_experiment: bool = True,
     train_start_date: str | None = None,
+    action_seed: int | None = None,
 ):
     """训练 IDDPG；断联实验按正常、断联两个阶段调用，共享第 200 轮内存状态。
 
@@ -361,9 +362,9 @@ def train_iddpg(
 
     # 跨 episode 累计步数，避免单日训练反复预热且无法触发联邦聚合。
     total_steps = 0
-    if communication is not None:
+    if action_seed is not None:
         for i, agent_name in enumerate(agents):
-            env.action_spaces[agent_name].seed(communication['seed'] + i)
+            env.action_spaces[agent_name].seed(action_seed + i)
 
     # --- Training Loop ---
     for ep in range(episodes):
