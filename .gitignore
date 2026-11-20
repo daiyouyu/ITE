@@ -5,6 +5,11 @@
 data/figure
 *.png
 *.pt
+docs
+
+tests
+
+data
 
 # ------------python默认不提交--------------------
 # Byte-compiled / optimized / DLL files
