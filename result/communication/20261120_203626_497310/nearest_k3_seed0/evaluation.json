@@ -1,0 +1,19 @@
+{
+  "evaluation_start_hour": 4320,
+  "evaluation_date": "2019-06-30",
+  "evaluation_hours": 24,
+  "park_costs_cny": {
+    "agent_0": 104316.68015789194,
+    "agent_1": 91318.52330929395,
+    "agent_2": 108969.83826653245,
+    "agent_3": 137136.50657757785
+  },
+  "park_carbon_costs_cny": {
+    "agent_0": 31.618925027795754,
+    "agent_1": 31.765307601434834,
+    "agent_2": 31.648720749125694,
+    "agent_3": 35.855473591905614
+  },
+  "system_cost_cny": 441741.54831129615,
+  "system_carbon_cost_cny": 130.8884269702619
+}

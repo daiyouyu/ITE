@@ -1,0 +1,150 @@
+[
+  {
+    "strategy": "nearest",
+    "neighbors": 1,
+    "seed": 0,
+    "epochs": 10000,
+    "train_days": 1,
+    "train_date": "2019-06-30",
+    "rounds": 9995,
+    "descriptor_bytes": 3838080,
+    "request_bytes": 639680,
+    "actor_bytes": 4197260320,
+    "total_bytes": 4201738080,
+    "final_100_episode_reward_per_park": [
+      -109.4413070678711,
+      -106.85933685302734,
+      -113.2922134399414,
+      -139.3535614013672
+    ],
+    "evaluation_start_hour": 4320,
+    "evaluation_date": "2019-06-30",
+    "evaluation_hours": 24,
+    "park_costs_cny": {
+      "agent_0": 115682.07172303107,
+      "agent_1": 101755.4752080861,
+      "agent_2": 105136.55594870949,
+      "agent_3": 145721.49183550128
+    },
+    "park_carbon_costs_cny": {
+      "agent_0": 30.83656049346201,
+      "agent_1": 29.471216798650527,
+      "agent_2": 30.22026197423968,
+      "agent_3": 36.72599255169251
+    },
+    "system_cost_cny": 468295.59471532796,
+    "system_carbon_cost_cny": 127.25403181804472,
+    "output": "result/communication/20261120_203626_497310/nearest_k1_seed0"
+  },
+  {
+    "strategy": "nearest",
+    "neighbors": 2,
+    "seed": 0,
+    "epochs": 10000,
+    "train_days": 1,
+    "train_date": "2019-06-30",
+    "rounds": 9995,
+    "descriptor_bytes": 3838080,
+    "request_bytes": 1279360,
+    "actor_bytes": 8394520640,
+    "total_bytes": 8399638080,
+    "final_100_episode_reward_per_park": [
+      -110.5995864868164,
+      -108.45303344726562,
+      -115.86585235595703,
+      -132.11807250976562
+    ],
+    "evaluation_start_hour": 4320,
+    "evaluation_date": "2019-06-30",
+    "evaluation_hours": 24,
+    "park_costs_cny": {
+      "agent_0": 104814.62134035415,
+      "agent_1": 104851.28709304618,
+      "agent_2": 106182.5857973918,
+      "agent_3": 126156.47703108842
+    },
+    "park_carbon_costs_cny": {
+      "agent_0": 31.580550178972338,
+      "agent_1": 31.76516699056621,
+      "agent_2": 31.595030308677657,
+      "agent_3": 36.72734664316387
+    },
+    "system_cost_cny": 442004.97126188054,
+    "system_carbon_cost_cny": 131.66809412138008,
+    "output": "result/communication/20261120_203626_497310/nearest_k2_seed0"
+  },
+  {
+    "strategy": "nearest",
+    "neighbors": 3,
+    "seed": 0,
+    "epochs": 10000,
+    "train_days": 1,
+    "train_date": "2019-06-30",
+    "rounds": 9995,
+    "descriptor_bytes": 3838080,
+    "request_bytes": 1919040,
+    "actor_bytes": 12591780960,
+    "total_bytes": 12597538080,
+    "final_100_episode_reward_per_park": [
+      -109.70410919189453,
+      -96.98670959472656,
+      -117.56066131591797,
+      -142.67227172851562
+    ],
+    "evaluation_start_hour": 4320,
+    "evaluation_date": "2019-06-30",
+    "evaluation_hours": 24,
+    "park_costs_cny": {
+      "agent_0": 104316.68015789194,
+      "agent_1": 91318.52330929395,
+      "agent_2": 108969.83826653245,
+      "agent_3": 137136.50657757785
+    },
+    "park_carbon_costs_cny": {
+      "agent_0": 31.618925027795754,
+      "agent_1": 31.765307601434834,
+      "agent_2": 31.648720749125694,
+      "agent_3": 35.855473591905614
+    },
+    "system_cost_cny": 441741.54831129615,
+    "system_carbon_cost_cny": 130.8884269702619,
+    "output": "result/communication/20261120_203626_497310/nearest_k3_seed0"
+  },
+  {
+    "strategy": "nearest",
+    "neighbors": 0,
+    "seed": 0,
+    "epochs": 10000,
+    "train_days": 1,
+    "train_date": "2019-06-30",
+    "rounds": 9995,
+    "descriptor_bytes": 3838080,
+    "request_bytes": 0,
+    "actor_bytes": 0,
+    "total_bytes": 3838080,
+    "final_100_episode_reward_per_park": [
+      -111.29608154296875,
+      -107.46034240722656,
+      -114.8333969116211,
+      -133.20095825195312
+    ],
+    "evaluation_start_hour": 4320,
+    "evaluation_date": "2019-06-30",
+    "evaluation_hours": 24,
+    "park_costs_cny": {
+      "agent_0": 103349.43985138596,
+      "agent_1": 102782.340602794,
+      "agent_2": 104628.28571538418,
+      "agent_3": 128428.29234550943
+    },
+    "park_carbon_costs_cny": {
+      "agent_0": 31.12116578300077,
+      "agent_1": 31.62512798447472,
+      "agent_2": 30.573807084805043,
+      "agent_3": 36.6642757302079
+    },
+    "system_cost_cny": 439188.35851507355,
+    "system_carbon_cost_cny": 129.98437658248844,
+    "output": "result/communication/20261120_203626_497310/nearest_k0_seed0"
+  }
+]
