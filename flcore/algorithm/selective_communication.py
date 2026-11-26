@@ -98,7 +98,7 @@ def aggregate_selected(
                     distances[i, j] = (local - peer).square().mean().sqrt().item()
                 if j != i:
                     candidates.append(j)
-            # 没有可比邻居时保留自身主干，包括自身没有配置任何匹配动作的园区。
+            # 没有可比邻居时保留自身主干。
             peers = select_neighbors(distances[i], candidates,
                                      strategy, neighbors, model.communication_rng)
             if not peers:

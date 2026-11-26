@@ -122,7 +122,8 @@ class MADDPG:
             actions.append(a.astype(np.float32))
         return actions
 
-    def update(self):
+    def update(self, *, record_descriptors: bool = True):
+        """用一批回放数据更新 Actor 和 Critic，可跳过联邦匹配专用的历史动作摘要。"""
         if self.replay.size() < self.batch_size:
             return
 
@@ -144,12 +145,12 @@ class MADDPG:
         obs_splits = torch.split(obs_b_t, self.obs_dims, dim=1)
         obs_splits_next = torch.split(next_obs_b_t, self.obs_dims, dim=1)
         # 计算所有 agent 的 proto（base 输出）并在 batch 维度取均值，追加到历史列表
-        with torch.no_grad():
-            obs_splits_all = torch.split(obs_b_t, self.obs_dims, dim=1)
-            for j in range(self.n_agents):
-                out_j = self.actors[j](obs_splits_all[j])
-                proto_mean_j = out_j.mean(dim=0).detach().cpu()  # (Feat,)
-                self.proto_history[j].append(proto_mean_j)
+        if record_descriptors:
+            with torch.no_grad():
+                for j in range(self.n_agents):
+                    out_j = self.actors[j](obs_splits[j])
+                    proto_mean_j = out_j.mean(dim=0).detach().cpu()
+                    self.proto_history[j].append(proto_mean_j)
 
         # For each agent, compute targets and update critic & actor
         for i in range(self.n_agents):

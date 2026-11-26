@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import json
+from pathlib import Path
 from typing import List, Tuple, Dict, Any
 import numpy as np
 
@@ -170,3 +172,17 @@ def infer_dims(env) -> Tuple[List[int], List[int], List[float], List[str]]:
     action_dims = [int(space.shape[0]) for space in action_spaces]
     max_actions = [float(space.high[0]) for space in action_spaces]
     return obs_dims, action_dims, max_actions, agents
+
+
+def save_action_config(
+    run_dir: Path,
+    env: MultiBatteryCoordinator,
+) -> None:
+    """保存异构模型的动作顺序和训练归一化尺度，供评估重建同一接口。"""
+    config = {
+        "actions": {agent: env.envs[agent].action_names for agent in env.agents},
+        "observation_scales": env.observation_scales,
+    }
+    (run_dir / "actions.json").write_text(
+        json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8",
+    )

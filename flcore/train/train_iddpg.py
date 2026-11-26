@@ -10,7 +10,7 @@ import torch
 from datetime import datetime as dt
 from flcore.train.train_common import (
     default_presets, load_series_split, build_envs,
-    infer_dims, list_by_agents, flatten_obs, flatten_actions
+    infer_dims, list_by_agents, flatten_obs, flatten_actions, save_action_config
 )
 from flcore.algorithm.IDDPG import IDDPG
 from flcore.Env.multi_env import MultiBatteryCoordinator
@@ -232,7 +232,6 @@ def train_iddpg(
     train_start_date: str | None = None,
     action_seed: int | None = None,
     compact_actions: bool = False,
-    match_actions: tuple[str, ...] | None = None,
 ):
     """训练 IDDPG；断联实验按正常、断联两个阶段调用，共享第 200 轮内存状态。
 
@@ -246,7 +245,6 @@ def train_iddpg(
         snapshot_ref: normal 阶段返回的内存状态，仅断联阶段需要。
         output_root: 断联实验模型与结果的保存根目录。
         compact_actions: 启用异构动作空间和 Actor 主干聚合。
-        match_actions: DSFA 用于匹配的动作名称，None 使用双方全部共同动作。
 
     Returns:
         普通训练返回奖励与测试奖励；断联正常阶段返回内存状态字节串，
@@ -254,8 +252,6 @@ def train_iddpg(
     """
     if compact_actions and (lost_contact or (Federated and fed_method not in ('DSFA', 'FedAvg'))):
         raise ValueError('异构动作训练支持独立训练、DSFA 和 FedAvg')
-    if match_actions is not None and not compact_actions:
-        raise ValueError('指定匹配动作需要启用异构动作空间')
     if communication is not None:
         if lost_contact or not Federated or fed_method != 'DSFA':
             raise ValueError('选择性通信入口仅支持普通 DSFA；断联可通过聚合接口的 online_agents 测试')
@@ -363,7 +359,7 @@ def train_iddpg(
         gamma=presets.algo_kwargs["gamma"], tau=presets.algo_kwargs["tau"],
         batch_size=presets.algo_kwargs["batch_size"], buffer_size=presets.algo_kwargs["buffer_size"],
         lr_actor=presets.algo_kwargs["lr_actor"], lr_critic=presets.algo_kwargs["lr_critic"],
-        action_names=action_names, match_actions=match_actions,
+        action_names=action_names,
     )
 
     rewards, test_rewards = [], []
@@ -471,10 +467,7 @@ def train_iddpg(
             np.savez(run_dir / 'fed_weights.npz',
                      episodes=np.asarray(federation_weight_episodes, dtype=int),
                      weights=np.asarray(federation_weights_history).reshape(-1, len(agents), len(agents)))
-            (run_dir / 'actions.json').write_text(
-                json.dumps({'actions': dict(zip(agents, action_names)), 'match_actions': match_actions,
-                            'observation_scales': env.observation_scales},
-                           ensure_ascii=False, indent=2), encoding='utf-8')
+            save_action_config(run_dir, env)
             if Federated and fed_method == 'DSFA':
                 (run_dir / 'communication.json').write_text(
                     json.dumps({'config': communication,

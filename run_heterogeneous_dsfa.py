@@ -1,4 +1,4 @@
-"""在同一套异构园区上对照独立训练、主干等权聚合和 DSFA。"""
+"""在同一套异构园区上对照 IDDPG、MADDPG、主干等权聚合和 DSFA。"""
 
 import argparse
 import csv
@@ -11,16 +11,18 @@ from pathlib import Path
 
 
 def run_experiment(args: argparse.Namespace, output: Path) -> None:
-    """对每个种子训练三组模型，在留出日评估，并保存模型、日志和汇总指标。"""
+    """对每个种子训练四组模型，在留出日评估，并保存模型、日志和汇总指标。"""
     import numpy as np
     import torch
 
     from flcore.train.train_iddpg import train_iddpg
+    from flcore.train.train_maddpg import train_maddpg
     from run_communication import evaluate_training_day
 
     torch.set_num_threads(1)
     groups = (
         ("IDDPG", False, "DSFA"),
+        ("MADDPG", False, None),
         ("BackboneFedAvg", True, "FedAvg"),
         ("HeterogeneousDSFA", True, "DSFA"),
     )
@@ -36,14 +38,22 @@ def run_experiment(args: argparse.Namespace, output: Path) -> None:
             if name == "HeterogeneousDSFA":
                 communication = dict(strategy="nearest", neighbors=args.neighbors, seed=seed)
             with (directory / "training.log").open("w", encoding="utf-8") as log, redirect_stdout(log):
-                train_iddpg(
-                    args.epochs, args.train_days, 0, federated, method,
-                    compact_actions=True, match_actions=tuple(args.match_actions),
-                    communication=communication, experiment_dir=str(directory),
-                    train_start_date=args.train_date, action_seed=seed,
-                )
+                if name == "MADDPG":
+                    train_maddpg(
+                        args.epochs, args.train_days, 0, Federated=False,
+                        compact_actions=True, experiment_dir=str(directory),
+                        train_start_date=args.train_date, action_seed=seed,
+                    )
+                else:
+                    train_iddpg(
+                        args.epochs, args.train_days, 0, federated, method,
+                        compact_actions=True,
+                        communication=communication, experiment_dir=str(directory),
+                        train_start_date=args.train_date, action_seed=seed,
+                    )
             evaluation = evaluate_training_day(
                 directory / "models", args.eval_date, compact_actions=True, federated=federated,
+                algorithm="MADDPG" if name == "MADDPG" else "IDDPG",
             )
             (directory / "evaluation.json").write_text(
                 json.dumps(evaluation, ensure_ascii=False, indent=2), encoding="utf-8",
@@ -76,12 +86,9 @@ def main() -> None:
     parser.add_argument("--train-days", type=int, default=1, help="连续训练数据天数")
     parser.add_argument("--train-date", default="2019-06-30", help="训练起始日期 YYYY-MM-DD")
     parser.add_argument("--eval-date", default="2019-07-01", help="留出评估日期 YYYY-MM-DD")
-    parser.add_argument("--seeds", nargs="+", type=int, default=[0], help="三组共用的随机种子")
+    parser.add_argument("--seeds", nargs="+", type=int, default=[0], help="四组共用的随机种子")
     parser.add_argument("--neighbors", type=int, choices=range(4), default=3,
                         help="DSFA 最多选择的邻居数，不含自身")
-    parser.add_argument("--match-actions", nargs="+", default=["TPB", "HB"],
-                        choices=["BES", "HES", "TPB", "CHP", "HB", "sell", "buy"],
-                        help="DSFA 用于匹配的动作名称")
     parser.add_argument("--output-root", type=Path, default=Path("result/heterogeneous_dsfa"))
     args = parser.parse_args()
     if min(args.epochs, args.train_days) <= 0:

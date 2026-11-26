@@ -1,6 +1,6 @@
 from flcore.train.train_common import (
-    default_presets, load_series_split, build_envs,
-    infer_dims, list_by_agents, flatten_obs, flatten_actions
+    default_presets, load_series_split,
+    infer_dims, list_by_agents, flatten_obs, flatten_actions, save_action_config
 )
 from flcore.algorithm.MADDPG import MADDPG
 from flcore.Env.multi_env import MultiBatteryCoordinator
@@ -12,11 +12,18 @@ import time
 
 def train_maddpg(episodes=1000, train=7, test=1, Federated=True,
                  experiment_dir: str | None = None,
-                 train_start_date: str | None = None):
-    """训练 MADDPG，并可将模型和逐轮奖励保存到独立实验目录。"""
-    # --- 统一使用公共预设 ---
-    # 使用同一套公共预设
-    presets = default_presets()  # 'weekly' / 'fast_debug' / 'monthly'
+                 train_start_date: str | None = None, *,
+                 compact_actions: bool = False,
+                 action_seed: int | None = None):
+    """训练 MADDPG，返回逐轮训练奖励和测试奖励。
+
+    compact_actions 按园区设备生成异构动作空间，适用于集中训练基线。
+    action_seed 为探索阶段的动作空间设定随机种子，None 沿用环境默认行为。
+    experiment_dir 指定模型、奖励和异构动作配置的保存目录。
+    """
+    if compact_actions and Federated:
+        raise ValueError("异构 MADDPG 基线使用集中训练，现有联邦 MADDPG 聚合要求动作同维")
+    presets = default_presets(compact_actions=compact_actions)
     train_series, test_series, T, train_idx, test_idx = load_series_split(
         path1="./data/IES_data/G_demand.csv",
         path2="./data/IES_data/H_demand.csv",
@@ -37,6 +44,9 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True,
 
     rewards_record, rewards, test_rewards = [], [], []
     total_steps = 0
+    if action_seed is not None:
+        for index, agent in enumerate(agents):
+            env.action_spaces[agent].seed(action_seed + index)
 
     for ep in range(episodes):
         start_time = time.time()
@@ -90,7 +100,7 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True,
             maddpg.replay.add(joint_obs, joint_actions, rew_list, joint_next_obs, done_list)
             total_steps += 1
             if total_steps % 3 == 0:
-                maddpg.update()
+                maddpg.update(record_descriptors=not compact_actions)
             if Federated:
                 if total_steps % 24 == 0:
                     maddpg.Fed_Aggergate()
@@ -129,11 +139,13 @@ def train_maddpg(episodes=1000, train=7, test=1, Federated=True,
         print(format_episode_info(ep, (ep_rew / (t + 1)) * 24, ep_info[0]))
 
     env.close()
-    if experiment_dir is None:
+    if experiment_dir is None and not compact_actions:
         maddpg.save("maddpg", Fed=Federated)
     else:
-        run_dir = Path(experiment_dir)
+        run_dir = Path(experiment_dir) if experiment_dir is not None else Path("model_pth/maddpg_compact")
         run_dir.mkdir(parents=True, exist_ok=True)
         maddpg.save_to_directory(str(run_dir / "models"), fed=Federated)
         np.savez(run_dir / "rewards.npz", rewards=np.asarray(rewards).T)
+        if compact_actions:
+            save_action_config(run_dir, env)
     return rewards, test_rewards

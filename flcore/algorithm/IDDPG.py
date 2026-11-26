@@ -49,14 +49,12 @@ class IDDPG:
     def __init__(self, obs_dims, action_dims, max_actions,
                  lr_actor=1e-3, lr_critic=1e-3, gamma=0.99, tau=0.01,
                  batch_size=256, buffer_size=100000, *,
-                 action_names: list[tuple[str, ...]] | None = None,
-                 match_actions: tuple[str, ...] | None = None):
+                 action_names: list[tuple[str, ...]] | None = None):
         """
         obs_dims: list[int] 每个 agent 的观测维度
         action_dims: list[int] 每个 agent 的动作维度
         max_actions: list[float or array] 每个 agent 的动作界（用于 clip）
-        action_names: 园区动作清单。提供时只聚合 Actor 主干，并按名称匹配动作。
-        match_actions: 匹配采用的动作名称。None 使用双方全部共同动作。
+        action_names: 园区动作清单。提供时只聚合 Actor 主干，并按名称匹配双方共有动作。
         """
         self.n_agents = len(obs_dims)
         self.obs_dims = obs_dims
@@ -71,17 +69,10 @@ class IDDPG:
                 for names, dim in zip(action_names, action_dims, strict=True)
             ):
                 raise ValueError("园区动作名称必须唯一，并与各园区的输出维度一致")
-            if match_actions is not None:
-                available = {name for names in action_names for name in names}
-                if not match_actions or not set(match_actions) <= available:
-                    raise ValueError("匹配动作必须在园区动作清单中出现，且至少指定一项")
             self.match_indices = [
-                {name: index for index, name in enumerate(names)
-                 if match_actions is None or name in match_actions}
+                {name: index for index, name in enumerate(names)}
                 for names in action_names
             ]
-        elif match_actions is not None:
-            raise ValueError("指定匹配动作需要提供园区动作名称")
 
         # 独立 actor / critic
         self.actors, self.actor_targets, self.actor_opts = [], [], []
