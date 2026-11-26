@@ -24,7 +24,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=1000, help="每种算法的训练轮数")
     parser.add_argument("--train-days", type=int, default=1, help="训练数据天数，默认一天")
     parser.add_argument("--train-date", type=str,
-                        help="训练起始日期（YYYY-MM-DD）；指定后连续取当天起的训练数据，包括周末")
+                        help="训练起始日期（2019-06-30）；指定后连续取当天起的训练数据，包括周末")
     parser.add_argument("--seed", type=int, default=0, help="随机种子")
     parser.add_argument("--output", type=Path,
                         help="输出目录；默认按时间生成 result/4.2.1 下的新目录")
@@ -57,17 +57,19 @@ def main() -> None:
         print(f"开始训练 {algorithm}，输出目录：{run_dir}", flush=True)
         if algorithm == "IDDPG":
             train_iddpg(args.epochs, args.train_days, 0, False,
-                        experiment_dir=str(run_dir), train_start_date=args.train_date)
+                        experiment_dir=str(run_dir), train_start_date=args.train_date,
+                        action_seed=args.seed)
         elif algorithm == "MADDPG":
             train_maddpg(args.epochs, args.train_days, 0, False,
                          experiment_dir=str(run_dir), train_start_date=args.train_date)
         elif algorithm == "FedAvg":
             train_iddpg(args.epochs, args.train_days, 0, True, "FedAvg",
-                        experiment_dir=str(run_dir), train_start_date=args.train_date)
+                        experiment_dir=str(run_dir), train_start_date=args.train_date,
+                        action_seed=args.seed)
         else:
             train_iddpg(args.epochs, args.train_days, 0, True, "DSFA",
                         experiment_dir=str(run_dir), missing_devices_experiment=False,
-                        train_start_date=args.train_date)
+                        train_start_date=args.train_date, action_seed=args.seed)
     print(f"4.2.1 训练完成：{output}", flush=True)
 
 

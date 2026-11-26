@@ -1,5 +1,7 @@
 """DSFA 两阶段通信仿真：摘要筛选、按需 Actor 传输及有效载荷统计。"""
 
+import random
+
 import numpy as np
 import torch
 
@@ -45,7 +47,8 @@ def aggregate_selected(
 ) -> np.ndarray | None:
     """执行一次两阶段 DSFA，返回完整权重矩阵，历史不足则返回 None。
 
-    使用本地历史动作均值到候选当前动作的 L2 距离。自身始终参与，
+    使用本地历史动作均值到候选当前动作的距离。命名动作只比较共同项，
+    以 RMSE 作为距离。自身始终参与，缺少共同动作的邻居不进入候选集。
     离线园区不收发。按有向单播累计 float32 摘要、int64 版本号、
     两个 int64 请求字段及 Actor 参数字节，不包含网络协议头和重传。
     通信记录保存在 model.communication_records；本函数不建立真实连接。
@@ -62,25 +65,45 @@ def aggregate_selected(
     if not hasattr(model, 'communication_records'):
         model.communication_records = []
         model.communication_rng = np.random.default_rng(seed)
+        model.communication_replay_rng = random.Random(seed)
     round_id = len(model.communication_records)
-    obs, _, _, _, _ = model.replay.sample(model.batch_size)
+    match_indices = model.match_indices
+    replay_rng = model.communication_replay_rng if match_indices is not None else None
+    obs, _, _, _, _ = model.replay.sample(model.batch_size, rng=replay_rng)
     device = next(model.actors[online[0]].parameters()).device
     obs = torch.as_tensor(obs, dtype=torch.float32, device=device)
     with torch.no_grad():
         # 第一阶段只发布动作摘要；历史行为参考始终留在本地。
-        descriptors = {
-            j: model.actors[j](obs[:, model._obs_slices[j]]).mean(0).cpu()
-            for j in online
-        }
+        descriptors = {}
+        for j in online:
+            summary = model.actors[j](obs[:, model._obs_slices[j]]).mean(0).cpu()
+            descriptors[j] = summary if match_indices is None else {
+                name: summary[index] for name, index in match_indices[j].items()
+            }
         references = {i: torch.stack(model.proto_history[i]).mean(0).cpu() for i in online}
         distances = np.full((model.n_agents, model.n_agents), np.nan)
         weights = np.zeros_like(distances)
         selected = np.zeros_like(distances, dtype=bool)
         for i in online:
+            candidates = []
             for j in online:
-                distances[i, j] = torch.linalg.vector_norm(references[i] - descriptors[j]).item()
-            peers = select_neighbors(distances[i], [j for j in online if j != i],
+                if match_indices is None:
+                    distances[i, j] = torch.linalg.vector_norm(references[i] - descriptors[j]).item()
+                else:
+                    common = sorted(match_indices[i].keys() & descriptors[j].keys())
+                    if not common:
+                        continue
+                    local = references[i][[match_indices[i][name] for name in common]]
+                    peer = torch.stack([descriptors[j][name] for name in common])
+                    distances[i, j] = (local - peer).square().mean().sqrt().item()
+                if j != i:
+                    candidates.append(j)
+            # 没有可比邻居时保留自身主干，包括自身没有配置任何匹配动作的园区。
+            peers = select_neighbors(distances[i], candidates,
                                      strategy, neighbors, model.communication_rng)
+            if not peers:
+                weights[i, i] = 1.0
+                continue
             sources = [i, *peers]
             selected[i, peers] = True
             inverse = 1.0 / (distances[i, sources] + 1e-8)
@@ -92,18 +115,24 @@ def aggregate_selected(
         actor_bytes = 0
         for i in online:
             sources = [i, *np.flatnonzero(selected[i]).tolist()]
-            parameters = [list(model.actors[j].parameters()) for j in sources]
+            if len(sources) == 1:
+                continue
+            parameters = [model.actor_aggregation_parameters(j) for j in sources]
             updates[i] = [sum(weights[i, j] * parameters[pos][k].detach()
                               for pos, j in enumerate(sources))
                           for k in range(len(parameters[0]))]
-            for j in sources[1:]:
-                actor_bytes += sum(p.numel() * p.element_size() for p in model.actors[j].parameters())
+            for peer_parameters in parameters[1:]:
+                actor_bytes += sum(p.numel() * p.element_size() for p in peer_parameters)
         for i, values in updates.items():
-            for parameter, value in zip(model.actors[i].parameters(), values):
+            for parameter, value in zip(model.actor_aggregation_parameters(i), values):
                 parameter.copy_(value)
 
-    descriptor_bytes = sum(descriptors[j].numel() * descriptors[j].element_size() + 8
-                           for i in online for j in online if i != j)
+    # 异构模式的名称和顺序由实验配置预先共享，每轮只发送值和版本。
+    descriptor_bytes = (len(online) - 1) * sum(
+        (descriptors[j].numel() * descriptors[j].element_size()
+         if match_indices is None else sum(value.element_size() for value in descriptors[j].values()))
+        + 8 for j in online
+    )
     request_bytes = int(selected.sum()) * 16
     model.communication_records.append({
         'round': round_id, 'strategy': strategy, 'neighbors': neighbors,

@@ -231,6 +231,8 @@ def train_iddpg(
     missing_devices_experiment: bool = True,
     train_start_date: str | None = None,
     action_seed: int | None = None,
+    compact_actions: bool = False,
+    match_actions: tuple[str, ...] | None = None,
 ):
     """训练 IDDPG；断联实验按正常、断联两个阶段调用，共享第 200 轮内存状态。
 
@@ -243,11 +245,17 @@ def train_iddpg(
         disconnect_schedule: 左闭右开的失联 episode 区间。
         snapshot_ref: normal 阶段返回的内存状态，仅断联阶段需要。
         output_root: 断联实验模型与结果的保存根目录。
+        compact_actions: 启用异构动作空间和 Actor 主干聚合。
+        match_actions: DSFA 用于匹配的动作名称，None 使用双方全部共同动作。
 
     Returns:
         普通训练返回奖励与测试奖励；断联正常阶段返回内存状态字节串，
         断联阶段返回逐 episode 奖励数组。
     """
+    if compact_actions and (lost_contact or (Federated and fed_method not in ('DSFA', 'FedAvg'))):
+        raise ValueError('异构动作训练支持独立训练、DSFA 和 FedAvg')
+    if match_actions is not None and not compact_actions:
+        raise ValueError('指定匹配动作需要启用异构动作空间')
     if communication is not None:
         if lost_contact or not Federated or fed_method != 'DSFA':
             raise ValueError('选择性通信入口仅支持普通 DSFA；断联可通过聚合接口的 online_agents 测试')
@@ -329,8 +337,8 @@ def train_iddpg(
             env.close()
 
     # --- Setup ---
-    presets = default_presets()
-    missing_devices = (missing_devices_experiment and Federated
+    presets = default_presets(compact_actions=compact_actions)
+    missing_devices = (not compact_actions and missing_devices_experiment and Federated
                        and fed_method == 'DSFA' and communication is None)
     if missing_devices:
         # 储能设备统一采用默认预设：park 1/3 电池、park 2 无储能、park 4 氢储能。
@@ -347,18 +355,21 @@ def train_iddpg(
     # 普通训练只使用训练环境；test=0 时不能构造空测试序列环境。
     env = MultiBatteryCoordinator(train_series, **presets.env_kwargs)
     obs_dims, action_dims, max_actions, agents = infer_dims(env)
+    action_names = [env.envs[agent].action_names for agent in agents] if compact_actions else None
     
     # Initialize the algorithm
     iddpg = IDDPG(
         obs_dims, action_dims, max_actions,
         gamma=presets.algo_kwargs["gamma"], tau=presets.algo_kwargs["tau"],
         batch_size=presets.algo_kwargs["batch_size"], buffer_size=presets.algo_kwargs["buffer_size"],
-        lr_actor=presets.algo_kwargs["lr_actor"], lr_critic=presets.algo_kwargs["lr_critic"]
+        lr_actor=presets.algo_kwargs["lr_actor"], lr_critic=presets.algo_kwargs["lr_critic"],
+        action_names=action_names, match_actions=match_actions,
     )
 
     rewards, test_rewards = [], []
     # This list will store the average weight matrix for each episode
     federation_weights_history = []
+    federation_weight_episodes = []
 
     # 跨 episode 累计步数，避免单日训练反复预热且无法触发联邦聚合。
     total_steps = 0
@@ -409,7 +420,7 @@ def train_iddpg(
             update_step = total_steps
             # Update networks
             if update_step > 0 and update_step % 3 == 0:
-                iddpg.update()
+                iddpg.update(record_descriptors=not compact_actions or (Federated and fed_method == 'DSFA'))
 
             # --- Federated Aggregation Step ---
             # I_fed is 24, as in your original code
@@ -439,6 +450,7 @@ def train_iddpg(
         if episode_weights:
             avg_episode_weights = np.mean(episode_weights, axis=0)
             federation_weights_history.append(avg_episode_weights)
+            federation_weight_episodes.append(ep + 1)
 
         rewards.append((ep_rew / (t + 1)) * 24)
         ep_time = (time.time() - start_time) / 60
@@ -450,11 +462,24 @@ def train_iddpg(
     env.close()
     # Save the model
     model_prefix = "missing_DSFA" if missing_devices else f"iddpg_{fed_method}"
-    if experiment_dir is not None:
-        run_dir = Path(experiment_dir)
+    if experiment_dir is not None or compact_actions:
+        run_dir = Path(experiment_dir if experiment_dir is not None else output_root)
         run_dir.mkdir(parents=True, exist_ok=True)
         iddpg.save_to_directory(str(run_dir / 'models'), fed=Federated)
         np.savez(run_dir / 'rewards.npz', rewards=np.asarray(rewards).T)
+        if compact_actions:
+            np.savez(run_dir / 'fed_weights.npz',
+                     episodes=np.asarray(federation_weight_episodes, dtype=int),
+                     weights=np.asarray(federation_weights_history).reshape(-1, len(agents), len(agents)))
+            (run_dir / 'actions.json').write_text(
+                json.dumps({'actions': dict(zip(agents, action_names)), 'match_actions': match_actions,
+                            'observation_scales': env.observation_scales},
+                           ensure_ascii=False, indent=2), encoding='utf-8')
+            if Federated and fed_method == 'DSFA':
+                (run_dir / 'communication.json').write_text(
+                    json.dumps({'config': communication,
+                                'rounds': getattr(iddpg, 'communication_records', [])}),
+                    encoding='utf-8')
     elif communication is not None:
         run_dir = Path(output_root)
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -473,7 +498,7 @@ def train_iddpg(
             np.savez(result_dir / 'result_arrays.npz', DSFA=np.asarray(rewards).T)
 
     # --- Save Federation Weights ---
-    if federation_weights_history and communication is None and experiment_dir is None:
+    if federation_weights_history and not compact_actions and communication is None and experiment_dir is None:
         # Create a directory for today's results if it doesn't exist
         now_date = dt.now().strftime('%Y%m%d')
         save_dir = os.path.join('result', 'missing' if missing_devices else now_date)

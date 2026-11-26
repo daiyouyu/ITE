@@ -124,6 +124,20 @@ def format_rotation_table(results: dict) -> str:
     return "\n".join(lines)
 
 
+def format_original_table(results: dict) -> str:
+    """按论文原始环境表格的算法顺序输出总调度费用和碳税。"""
+    lines = ["Daily Scheduling Costs and Carbon Tax in the Original Environment (CNY)",
+             "Algorithm       Total Cost       Carbon Tax"]
+    for algorithm in ("DSFA", "IDDPG", "MADDPG", "FedAvg"):
+        original = results[algorithm]["original"]
+        label = "DSFA (Ours)" if algorithm == "DSFA" else algorithm
+        lines.append(
+            f"{label:<15} {original['system_cost_cny']:>12,.2f} "
+            f"{original['system_carbon_cost_cny']:>16,.2f}"
+        )
+    return "\n".join(lines)
+
+
 def main() -> None:
     """加载同批次四个训练模型，对原始日和数据轮转日分别评估并保存结果。"""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -190,6 +204,11 @@ def main() -> None:
         writer.writerows(rows)
     table = format_rotation_table(results)
     (output_dir / "table_2.md").write_text(table, encoding="utf-8")
+    original_table = format_original_table(results)
+    (output_dir / "original_environment_table.txt").write_text(
+        original_table + "\n", encoding="utf-8")
+    print(original_table)
+    print()
     print(table)
     print(f"结果已保存至：{output_dir}")
 

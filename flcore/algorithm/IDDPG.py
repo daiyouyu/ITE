@@ -25,8 +25,9 @@ class JointReplayBuffer:
     def add(self, joint_obs, joint_actions, joint_rewards, joint_next_obs, dones):
         self.buffer.append((joint_obs, joint_actions, joint_rewards, joint_next_obs, dones))
 
-    def sample(self, batch_size):
-        batch = random.sample(self.buffer, batch_size)
+    def sample(self, batch_size, *, rng: random.Random | None = None):
+        """采样回放数据；通信可传入独立随机源，避免改变本地训练的采样序列。"""
+        batch = random.sample(self.buffer, batch_size) if rng is None else rng.sample(self.buffer, batch_size)
         obs_b, acts_b, rews_b, next_obs_b, dones_b = zip(*batch)
         return (
             np.array(obs_b, dtype=np.float32),
@@ -47,16 +48,40 @@ class JointReplayBuffer:
 class IDDPG:
     def __init__(self, obs_dims, action_dims, max_actions,
                  lr_actor=1e-3, lr_critic=1e-3, gamma=0.99, tau=0.01,
-                 batch_size=256, buffer_size=100000):
+                 batch_size=256, buffer_size=100000, *,
+                 action_names: list[tuple[str, ...]] | None = None,
+                 match_actions: tuple[str, ...] | None = None):
         """
         obs_dims: list[int] 每个 agent 的观测维度
         action_dims: list[int] 每个 agent 的动作维度
         max_actions: list[float or array] 每个 agent 的动作界（用于 clip）
+        action_names: 园区动作清单。提供时只聚合 Actor 主干，并按名称匹配动作。
+        match_actions: 匹配采用的动作名称。None 使用双方全部共同动作。
         """
         self.n_agents = len(obs_dims)
         self.obs_dims = obs_dims
         self.action_dims = action_dims
         self.max_actions = max_actions
+        self.match_indices: list[dict[str, int]] | None = None
+        if action_names is not None:
+            if len(set(obs_dims)) != 1:
+                raise ValueError("共享主干要求各园区的观测维度一致")
+            if len(action_names) != self.n_agents or any(
+                len(names) != dim or len(set(names)) != dim or not dim
+                for names, dim in zip(action_names, action_dims, strict=True)
+            ):
+                raise ValueError("园区动作名称必须唯一，并与各园区的输出维度一致")
+            if match_actions is not None:
+                available = {name for names in action_names for name in names}
+                if not match_actions or not set(match_actions) <= available:
+                    raise ValueError("匹配动作必须在园区动作清单中出现，且至少指定一项")
+            self.match_indices = [
+                {name: index for index, name in enumerate(names)
+                 if match_actions is None or name in match_actions}
+                for names in action_names
+            ]
+        elif match_actions is not None:
+            raise ValueError("指定匹配动作需要提供园区动作名称")
 
         # 独立 actor / critic
         self.actors, self.actor_targets, self.actor_opts = [], [], []
@@ -71,6 +96,11 @@ class IDDPG:
         for i in range(self.n_agents):
 
             actor = Actor(obs_dims[i], action_dims[i], max_actions[i]).to(device)
+            if self.match_indices is not None and i:
+                # 主干从同一组参数开始训练，避免首轮平均独立初始化的隐藏单元。
+                with torch.no_grad():
+                    for target, source in zip(actor.shared_parameters(), self.actors[0].shared_parameters()):
+                        target.copy_(source)
             actor_t = copy.deepcopy(actor).to(device)
             opt_a = optim.Adam(actor.parameters(), lr=lr_actor)
             self.actors.append(actor)
@@ -121,7 +151,8 @@ class IDDPG:
         return actions
 
     # 一步更新（与 MADDPG 的外形一致；但每个 agent 的 critic 只看自己的 obs/act）
-    def update(self, online_agents=None):
+    def update(self, online_agents=None, *, record_descriptors: bool = True):
+        """用一批回放数据更新本地网络；无需匹配的训练可跳过历史动作记录。"""
         if self.replay.size() < self.batch_size:
             return
 
@@ -168,7 +199,7 @@ class IDDPG:
             # 累计 batch 维度上的 proto 均值，入历史
             with torch.no_grad():
                 # 断联园区继续本地更新，但不对外提供动作描述符。
-                if online_agents is None or i in online_agents:
+                if record_descriptors and (online_agents is None or i in online_agents):
                     self.proto_history[i].append(act_pred.mean(dim=0).detach().cpu())
                     self.Federated_proto.append(proto_i.detach())
                 else:
@@ -180,6 +211,11 @@ class IDDPG:
             for p, p_t in zip(self.critics[i].parameters(), self.critic_targets[i].parameters()):
                 p_t.data.copy_(self.tau * p.data + (1.0 - self.tau) * p_t.data)
 
+    def actor_aggregation_parameters(self, index: int) -> tuple[nn.Parameter, ...]:
+        """返回指定园区本轮允许发送及聚合的 Actor 参数。"""
+        actor = self.actors[index]
+        return actor.shared_parameters() if self.match_indices is not None else tuple(actor.parameters())
+
     def Fed_Aggergate(self, method='DSFA', online_agents=None, *, communication=None):
         """按在线园区集合聚合，返回完整权重矩阵（离线行列为零）。
 
@@ -190,6 +226,11 @@ class IDDPG:
         Returns:
             成功时返回 n_agents × n_agents 权重矩阵；历史不足时返回 None。
         """
+        if self.match_indices is not None:
+            if method == 'AllDSFA':
+                raise ValueError("异构动作模式的 Critic 仅支持本地训练")
+            if method == 'DSFA' and communication is None:
+                communication = dict(strategy='all', neighbors=max(0, self.n_agents - 1))
         if communication is not None:
             if method != 'DSFA':
                 raise ValueError("两阶段通信仅支持 DSFA")
@@ -231,7 +272,8 @@ class IDDPG:
 
         # 全部新参数取自同一聚合前快照，避免园区遍历顺序影响结果。
         with torch.no_grad():
-            actor_snapshot = [[p.detach().clone() for p in actor.parameters()] for actor in self.actors]
+            actor_snapshot = [[p.detach().clone() for p in self.actor_aggregation_parameters(i)]
+                              for i in range(self.n_agents)]
             actor_updates = {}
             for i in online:
                 actor_updates[i] = [
@@ -239,7 +281,7 @@ class IDDPG:
                     for k in range(len(actor_snapshot[i]))
                 ]
             for i, parameters in actor_updates.items():
-                for target, value in zip(self.actors[i].parameters(), parameters):
+                for target, value in zip(self.actor_aggregation_parameters(i), parameters):
                     target.copy_(value)
 
             if method == 'AllDSFA':

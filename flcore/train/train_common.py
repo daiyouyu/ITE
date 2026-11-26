@@ -36,8 +36,9 @@ class Presets:
     noise_warmup_steps: int = 24
 
 
-def default_presets() -> Presets:
+def default_presets(*, compact_actions: bool = False) -> Presets:
     """
+    compact_actions 启用按设备生成的动作空间，园区 2 采用无储能、无 CHP 的配置。
     可选 profile:
       - 'fast_debug': 2/1 天（接近你原 train_maddpg 的快速试跑）
       - 'weekly'   : 7/1 天（默认）
@@ -94,6 +95,10 @@ def default_presets() -> Presets:
                         },
         },
     )
+
+    if compact_actions:
+        env_kwargs["compact_actions"] = True
+        env_kwargs["per_agent_kwargs"]["agent_1"]["chp_enabled"] = False
 
     algo_kwargs = dict(
         lr_actor=2e-4,

@@ -5,8 +5,10 @@ from matplotlib import font_manager
 from datetime import datetime as dt
 import random
 import csv
+import json
 import sys
 from pathlib import Path
+import torch
 
 # ==== Font Configuration ====
 # Kept for compatibility, though we are using English now.
@@ -34,8 +36,8 @@ from typing import Dict, List, Tuple
 import argparse
 
 # 直接执行脚本时，Python 默认只搜索 utils 目录；补入项目根目录以加载 flcore。
+project_root = Path(__file__).resolve().parents[2]
 if __package__ in (None, ""):
-    project_root = Path(__file__).resolve().parents[2]
     sys.path.insert(0, str(project_root))
 
 from flcore.Env.multi_env import MultiBatteryCoordinator
@@ -679,25 +681,34 @@ def test_model_and_plot(algo: str = "iddpg",
                         tau: float = 0.01,
                         batch_size: int = 256,
                         buffer_size: int = 200_000,
-                        enable_env_mutation: bool = False) -> Tuple[
+                        enable_env_mutation: bool = False,
+                        train_date: str = "2019-06-30",
+                        run_dir: Path | None = None,
+                        algorithm: str = "DSFA") -> Tuple[
     List[np.ndarray], List[np.ndarray], Dict[str, float]]:
-    """评估 missing_DSFA 在训练数据上的表现并保存英文图表。
+    """在指定训练日期评估模型，保存英文图表与园区碳成本。
 
     train 应与训练命令的天数一致；test 固定为 0，且禁止环境平移。
     多日评估先完整运行策略以保持跨日储能状态，再仅展示指定日；
-    默认展示第三个工作日，不足三天时展示第一天。仅支持联邦 IDDPG。
+    默认展示第三天，不足三天时展示第一天；run_dir 指向 4.2.1 批次。
     返回空训练奖励列表、展示日奖励列表及各园区展示日累计碳成本。
     """
     if (algo, Fed, test, enable_env_mutation) != ("iddpg", True, 0, False) or train < 1:
         raise ValueError("missing_DSFA 评估要求 iddpg、Fed=True、train>=1、test=0，且不启用环境平移")
     presets = default_presets()
+    if run_dir is not None:
+        config = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
+        if config.get("train_date") != train_date or config.get("train_days") != train:
+            raise ValueError("评估日期或训练天数与 run_421.py 的实验配置不一致")
     park_configs = presets.env_kwargs["per_agent_kwargs"]
-    park_configs["agent_1"]["chp_enabled"] = False
+    if run_dir is None:
+        park_configs["agent_1"]["chp_enabled"] = False
     train_series, test_series, T, train_idx, test_idx = load_series_split(
-        path1="./data/IES_data/G_demand.csv",
-        path2="./data/IES_data/H_demand.csv",
+        path1=str(project_root / "data/IES_data/G_demand.csv"),
+        path2=str(project_root / "data/IES_data/H_demand.csv"),
         train_days=train,
-        test_days=test
+        test_days=test,
+        train_start_date=train_date,
     )
 
     # test=0 时测试切片为空；评估使用训练的完整工作日时序。
@@ -714,7 +725,9 @@ def test_model_and_plot(algo: str = "iddpg",
 
     obs, _ = test_env.reset()
 
-    if algo == "iddpg":
+    if run_dir is not None and algorithm not in ("IDDPG", "MADDPG", "FedAvg", "DSFA"):
+        raise ValueError(f"未知算法: {algorithm}")
+    if algo == "iddpg" and algorithm != "MADDPG":
         model = IDDPG(
             obs_dims, action_dims, max_actions,
             lr_actor=1e-3, lr_critic=1e-3,
@@ -727,14 +740,25 @@ def test_model_and_plot(algo: str = "iddpg",
             shared_obs_indices=[-2],
             **presets.algo_kwargs
         )
-    model.load(prefix="missing_DSFA", Fed=True)
+    if run_dir is None:
+        model.load(prefix="missing_DSFA", Fed=True)
+    else:
+        model_dir = run_dir / algorithm / "models"
+        fed = algorithm in ("DSFA", "FedAvg")
+        for index in range(len(agents)):
+            actor_path = model_dir / f"{fed}_actor_{index}.pth"
+            model.actors[index].load_state_dict(
+                torch.load(actor_path, map_location="cpu", weights_only=True)
+            )
+            model.actors[index].eval()
 
     # 奖励、统计和图表共用同一条轨迹，避免反复 reset 导致结果口径不一致。
     dt_hours = float(presets.env_kwargs.get("dt_hours", 1.0))
     full_per = rollout_one_day_per_agent(test_env, model, agents, day_start_idx=0,
                                          dt_hours=dt_hours)
     per = select_evaluation_day(full_per, selected_day)
-    print(f"Displaying workday {selected_day + 1}/{available_days}; earlier days were run to preserve storage state")
+    print(f"Displaying evaluation day {selected_day + 1}/{available_days}, starting {train_date}; "
+          "earlier days were run to preserve storage state")
     test_rewards = [np.array([per[a]['reward'].sum() for a in agents], dtype=np.float32)]
     co2_costs = {a: float(per[a]['co2_cost'].sum()) for a in agents}
     aggregate_keys = ['R_wind', 'R_solar', 'bat_dis', 'bat_charge', 'P_el', 'P_fc_e', 'boiler',
@@ -742,7 +766,7 @@ def test_model_and_plot(algo: str = "iddpg",
     agg = {key: np.sum([per[a][key] for a in agents], axis=0) for key in aggregate_keys}
     agg['demand'] = np.sum([per[a]['G_demand'] for a in agents], axis=0)
     agg['renew'] = agg['R_wind'] + agg['R_solar']
-    savefile = "./result/missing/evaluation"
+    savefile = str(run_dir / algorithm / "evaluation") if run_dir is not None else "./result/missing/evaluation"
     os.makedirs(savefile, exist_ok=True)
     export_battery_evaluation(per, park_configs, dt_hours, savefile)
     hydrogen_csv = export_hydrogen_evaluation(per['agent_3'], dt_hours, savefile)
@@ -751,11 +775,12 @@ def test_model_and_plot(algo: str = "iddpg",
 
     saved_files = plot_daily_stack_per_agent(per, save_dir=f"{savefile}", filename_prefix="daily_agent_")
 
-    G_grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"{savefile}/daily_agents_Fed{Fed}.png",
-                                                  title=f"Test Day {selected_day + 1}: Diurnal Electrical Power Balance by IES (MW)")
+    effective_fed = Fed if run_dir is None else algorithm in ("DSFA", "FedAvg")
+    G_grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"{savefile}/daily_agents_Fed{effective_fed}.png",
+                                                  title=f"{train_date}: Diurnal Electrical Power Balance by IES (MW)")
 
-    H_grid_path = plot_daily_stack_per_agent_H_grid(per, save_path=f"{savefile}/H_daily_agents_Fed{Fed}.png",
-                                                    title=f"Test Day {selected_day + 1}: Diurnal Thermal Power Balance by IES (MW)")
+    H_grid_path = plot_daily_stack_per_agent_H_grid(per, save_path=f"{savefile}/H_daily_agents_Fed{effective_fed}.png",
+                                                    title=f"{train_date}: Diurnal Thermal Power Balance by IES (MW)")
 
     print("Saved plot -> daily_supply_stack.png")
     print(f"Saved hydrogen data -> {hydrogen_csv}")
@@ -774,9 +799,18 @@ if __name__ == "__main__":
                         help='与训练时 --train_days 保持一致；7 天对应连续 5 个工作日')
     parser.add_argument('--plot_day_offset', type=int, default=None,
                         help='展示第几个工作日，从 0 开始；多日评估默认 2（第三天）')
+    parser.add_argument('--train-date', default='2019-06-30',
+                        help='训练及评估的起始日期，默认 2019-06-30')
+    parser.add_argument('--run-dir', type=Path,
+                        help='run_421.py 生成的实验批次目录；指定后加载该批次模型')
+    parser.add_argument('--algorithm', choices=('IDDPG', 'MADDPG', 'FedAvg', 'DSFA'),
+                        default='DSFA', help='--run-dir 中要评估的算法，默认 DSFA')
     args = parser.parse_args()
     _, rewards, co2_costs = test_model_and_plot(train=args.train_days,
-                                                plot_day_offset=args.plot_day_offset)
+                                                plot_day_offset=args.plot_day_offset,
+                                                train_date=args.train_date,
+                                                run_dir=args.run_dir,
+                                                algorithm=args.algorithm)
     print(f"Total Cumulative Reward: {sum(rewards)}")
     print("CO2 Emission Costs for each IES:")
     for idx, (agent, cost) in enumerate(co2_costs.items()):

@@ -25,6 +25,10 @@ class Actor(nn.Module):
             nn.Tanh()
         )
 
+    def shared_parameters(self) -> tuple[nn.Parameter, ...]:
+        """返回观测编码层和隐藏层参数，最后的动作映射层由园区本地训练。"""
+        return (*self.head.parameters(), *self.base[:-1].parameters())
+
     def forward(self, obs):
         out = self.head(obs)
         out = self.base(out)

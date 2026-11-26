@@ -57,6 +57,9 @@ class BatteryEnvSingle(gym.Env):
                  h2_operating_cost_per_MWh: float = 5.0,
                  h2_ramp_MW_per_hour: float = 1.5,
                  terminal_electricity_value_per_MWh: float = 200.0,
+                 compact_actions: bool = False,
+                 tpb_enabled: bool = True,
+                 hb_enabled: bool = True,
                  ):
         super().__init__()
         self.dt = float(dt_hours)
@@ -96,6 +99,8 @@ class BatteryEnvSingle(gym.Env):
         if not np.isfinite(self.hydrogen_invalid_action_cost_per_MWh) or self.hydrogen_invalid_action_cost_per_MWh < 0:
             raise ValueError("氢系统无效动作处罚必须为有限非负数")
         self.chp_enabled = bool(chp_enabled)
+        self.tpb_enabled = bool(tpb_enabled)
+        self.hb_enabled = bool(hb_enabled)
         self.P_es = 0.0
         self.eta_ch, self.eta_dis = float(eta_ch), float(eta_dis)
         self.soc_min, self.soc_max = float(soc_min), float(soc_max)
@@ -155,7 +160,16 @@ class BatteryEnvSingle(gym.Env):
         self._P_scale = 1.0
 
         # 动作/观测空间
-        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(6,), dtype=np.float32)
+        storage_action = {"hydrogen": "HES", "battery": "BES", "none": "storage"}[self.storage_type]
+        full_actions = (storage_action, "TPB", "CHP", "HB", "sell", "buy")
+        available = (
+            self.storage_type == "hydrogen" or (self.storage_type == "battery" and self.es_enabled),
+            self.tpb_enabled, self.chp_enabled, self.hb_enabled, True, True,
+        )
+        self.action_names = tuple(
+            name for name, enabled in zip(full_actions, available) if enabled or not compact_actions
+        )
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(len(self.action_names),), dtype=np.float32)
         self.observation_space = spaces.Box(
             low=np.array([0.0, 0.0, 0.0, -10.0, -1.0, -1.0, -1.0, -1e6, 0.0], dtype=np.float32),
             high=np.array([2.0, 2.0, 2.0, 10000.0, 1.0, 1.0, 1.0, 1e6, 1.0], dtype=np.float32))
@@ -216,6 +230,10 @@ class BatteryEnvSingle(gym.Env):
         return self._make_obs(0.0), {}
 
     def step(self, action: np.ndarray):
+        action = np.asarray(action)
+        if action.shape != self.action_space.shape:
+            raise ValueError(f"动作形状应为 {self.action_space.shape}，收到 {action.shape}")
+        controls = dict(zip(self.action_names, np.clip(action, -1.0, 1.0)))
         # 读取当步外生量（由协调器注入）
         G_L = self._exog["G_L"];
         H_L = self._exog["H_L"];
@@ -225,7 +243,7 @@ class BatteryEnvSingle(gym.Env):
         R_wind = self._exog["R_wind"]
 
         # 1) 根据园区设备类型执行储能动作
-        a = float(np.clip(action[0], -1.0, 1.0))
+        a = float(controls.get("HES", controls.get("BES", 0.0)))
         self.P_el = self.P_fc_e = self.P_fc_h = 0.0
         if self.storage_type == "hydrogen":
             self._hydrogen_block(a)
@@ -243,14 +261,11 @@ class BatteryEnvSingle(gym.Env):
         hydrogen_invalid_MWh = abs(hydrogen_requested_MW - hydrogen_actual_MW) * self.dt
         hydrogen_invalid_action_cost = hydrogen_invalid_MWh * self.hydrogen_invalid_action_cost_per_MWh
         # 锅炉动作
-        boiler_a = float(np.clip(action[1], -1.0, 1.0))
-        P_boiler_e = self._boiler_block(boiler_a)
+        P_boiler_e = self._boiler_block(float(controls["TPB"])) if self.tpb_enabled else 0.0
         # CHP动作
-        CHP_a = float(np.clip(action[2], -1.0, 1.0))
-        P_CHP_e, P_CHP_h = self._CHP_block(CHP_a)
+        P_CHP_e, P_CHP_h = self._CHP_block(float(controls.get("CHP", -1.0)))
         # HB动作
-        HB_a = float(np.clip(action[3], -1.0, 1.0))
-        P_HB_h = self._HB_block(HB_a)
+        P_HB_h = self._HB_block(float(controls["HB"])) if self.hb_enabled else 0.0
 
         # 电力结算
         net_power = G_L - R + self.P_es + self.P_el - self.P_fc_e - P_CHP_e - P_boiler_e  # MW
@@ -261,11 +276,11 @@ class BatteryEnvSingle(gym.Env):
         soc_cost = self.deg_c * abs(self.P_es)  # 折旧
         h2_cost = self.h2_operating_cost * (self.P_el + self.P_fc_e) * self.dt
         ##锅炉
-        boiler_cost, co2_boiler = self._boiler_cost(P_boiler_e)
+        boiler_cost, co2_boiler = self._boiler_cost(P_boiler_e) if self.tpb_enabled else (0.0, 0.0)
         ##CHP成本
         CHP_cost, co2_CHP = self._CHP_cost(P_CHP_e, P_CHP_h)
         ##HB成本
-        HB_cost, co2_HB = self._HB_cost(P_HB_h)
+        HB_cost, co2_HB = self._HB_cost(P_HB_h) if self.hb_enabled else (0.0, 0.0)
         co2_cost = co2_CHP + co2_HB + co2_boiler
         a_boiler = boiler_cost / (P_boiler_e + 0.0000001)
         a_CHP = CHP_cost / ((P_CHP_h + P_CHP_e) + 0.0000001)
@@ -286,8 +301,8 @@ class BatteryEnvSingle(gym.Env):
         R_cost = max(0.0, R_gen * 5)
         denom = max(1e-9, p_dis + gen + R_gen)
 
-        a_sell = float(np.clip(action[4], -1.0, 1.0))
-        a_buy = float(np.clip(action[5], -1.0, 1.0))
+        a_sell = float(controls["sell"])
+        a_buy = float(controls["buy"])
         # 供需声明（MW）
         demand_MW = max(0.0, net_power)  # >0 需要购电
         offer_MW = max(0.0, -net_power) * 0.8  # <0 可对外售电
@@ -484,6 +499,8 @@ class MultiBatteryCoordinator(gym.Env):
     def __init__(self, series: Dict[str, np.ndarray],
                  n_agents: int,
                  per_agent_kwargs,
+                 *,
+                 observation_scales: dict[str, float] | None = None,
                  **single_kwargs):
         super().__init__()
         self.n_agents = int(n_agents)
@@ -496,10 +513,15 @@ class MultiBatteryCoordinator(gym.Env):
         self.t = 0
 
         # 归一化尺度（统一由协调器计算并下发）
-        self._G_L_scale = max(1.0, float(np.percentile(self.series[0]['G_L'], 99)))
-        self._H_L_scale = max(1.0, float(np.percentile(self.series[0]['H_L'], 99)))
-        self._R_scale = max(1.0, float(np.percentile(self.series[0]['R'], 99)))
-        self._P_scale = max(1.0, float(np.percentile(self.series[0]['P'], 99)))
+        scale_fields = ("G_L", "H_L", "R", "P")
+        if observation_scales is None:
+            observation_scales = {field: max(1.0, float(np.percentile(self.series[0][field], 99)))
+                                  for field in scale_fields}
+        if set(observation_scales) != set(scale_fields) or any(
+            not np.isfinite(value) or value <= 0 for value in observation_scales.values()
+        ):
+            raise ValueError("观测归一化尺度必须包含 G_L、H_L、R、P 的有限正数")
+        self.observation_scales = dict(observation_scales)
 
         # 创建 N 个独立子环境（不再传入 series）
         # episode_len 用全局 T 或你训练时的滑窗长度
@@ -530,10 +552,10 @@ class MultiBatteryCoordinator(gym.Env):
             sin_h = float(self.series[i]["sin_h"][t])
             cos_h = float(self.series[i]["cos_h"][t])
             env.set_exogenous(G_L, H_L, R, P, sin_h, cos_h, R_solar, R_wind,
-                              G_L_scale=self._G_L_scale,
-                              H_L_scale=self._H_L_scale,
-                              R_scale=self._R_scale,
-                              P_scale=self._P_scale)
+                              G_L_scale=self.observation_scales["G_L"],
+                              H_L_scale=self.observation_scales["H_L"],
+                              R_scale=self.observation_scales["R"],
+                              P_scale=self.observation_scales["P"])
 
     def reset(self, seed=None, options=None):
         self.t = 0
