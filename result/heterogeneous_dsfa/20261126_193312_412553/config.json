@@ -1,0 +1,12 @@
+{
+  "epochs": 8000,
+  "train_days": 1,
+  "train_date": "2019-06-30",
+  "eval_date": "2019-07-01",
+  "seeds": [
+    0
+  ],
+  "neighbors": 3,
+  "output_root": "result/heterogeneous_dsfa",
+  "resume": null
+}
