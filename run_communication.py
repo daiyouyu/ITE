@@ -8,67 +8,7 @@ import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-
-
-def evaluate_training_day(model_directory: Path, train_start_date: str | None = None) -> dict:
-    """在训练数据首日的 24 小时内无噪声评估模型。
-
-    Args:
-        model_directory: 当前实验保存的 Actor 权重目录。
-
-    Returns:
-        包含评估日索引、各园区总成本与碳税成本，以及系统汇总成本的字典。
-
-    Raises:
-        ValueError: 数据不足以覆盖完整的训练首日时抛出。
-    """
-    import numpy as np
-    import torch
-    from flcore.Env.multi_env import MultiBatteryCoordinator
-    from flcore.train.train_common import (default_presets, infer_dims,
-                                           list_by_agents, load_series_split)
-    from flcore.algorithm.IDDPG import IDDPG
-
-    eval_series, _, _, train_indices, _ = load_series_split(
-        train_days=1, test_days=0, train_start_date=train_start_date)
-    if len(train_indices) != 24:
-        raise ValueError(f'评估数据不足 24 小时: {len(train_indices)}')
-    presets = default_presets()
-    env = MultiBatteryCoordinator(eval_series, **presets.env_kwargs)
-    try:
-        obs_dims, action_dims, max_actions, agents = infer_dims(env)
-        model = IDDPG(obs_dims, action_dims, max_actions, **presets.algo_kwargs)
-        for index in range(len(agents)):
-            weights_path = model_directory / f'True_actor_{index}.pth'
-            model.actors[index].load_state_dict(
-                torch.load(weights_path, map_location='cpu', weights_only=True)
-            )
-        obs, _ = env.reset()
-        park_costs = {agent: 0.0 for agent in agents}
-        park_carbon_costs = {agent: 0.0 for agent in agents}
-        steps = 0
-        for _ in range(24):
-            actions = model.select_actions(list_by_agents(obs, agents), noise_scale=0.0)
-            obs, _, terminated, truncated, info = env.step(
-                {agent: actions[index] for index, agent in enumerate(agents)}
-            )
-            for agent in agents:
-                park_costs[agent] += float(info[agent]['total_cost'])
-                park_carbon_costs[agent] += float(info[agent]['co2_cost'])
-            steps += 1
-            if all(bool(terminated[agent]) or bool(truncated[agent]) for agent in agents):
-                break
-        return {
-            'evaluation_start_hour': train_indices[0],
-            'evaluation_date': str(eval_series[0]['datetime'][0])[:10],
-            'evaluation_hours': steps,
-            'park_costs_cny': park_costs,
-            'park_carbon_costs_cny': park_carbon_costs,
-            'system_cost_cny': float(sum(park_costs.values())),
-            'system_carbon_cost_cny': float(sum(park_carbon_costs.values())),
-        }
-    finally:
-        env.close()
+from flcore.utils.dispatch_evaluation import evaluate_training_day
 
 
 def run_experiment(strategy: str, neighbors: int, seed: int, epochs: int,
@@ -134,9 +74,9 @@ def main() -> None:
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--seeds', nargs='+', type=int,
                         help='可选：一次运行多个随机种子；指定后覆盖 --seed')
-    parser.add_argument('--epochs', type=int, default=10000)
+    parser.add_argument('--epochs', type=int, default=8000)
     parser.add_argument('--train-days', type=int, default=1)
-    parser.add_argument('--train-date', default='2019-06-30',
+    parser.add_argument('--train-date', default='2019-01-01',
                         help='训练和评估日期，默认与 4.2.1 批次一致')
     parser.add_argument('--workers', type=int, default=4)
     args = parser.parse_args()
