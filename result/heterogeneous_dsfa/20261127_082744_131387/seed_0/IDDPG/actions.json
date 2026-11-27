@@ -1,0 +1,40 @@
+{
+  "actions": {
+    "agent_0": [
+      "BES",
+      "TPB",
+      "CHP",
+      "HB",
+      "sell",
+      "buy"
+    ],
+    "agent_1": [
+      "TPB",
+      "HB",
+      "sell",
+      "buy"
+    ],
+    "agent_2": [
+      "BES",
+      "TPB",
+      "CHP",
+      "HB",
+      "sell",
+      "buy"
+    ],
+    "agent_3": [
+      "HES",
+      "TPB",
+      "CHP",
+      "HB",
+      "sell",
+      "buy"
+    ]
+  },
+  "observation_scales": {
+    "G_L": 17.6895125,
+    "H_L": 14.2447475,
+    "R": 4.374088749999999,
+    "P": 1869.5
+  }
+}
