@@ -5,10 +5,8 @@ from matplotlib import font_manager
 from datetime import datetime as dt
 import random
 import csv
-import json
 import sys
 from pathlib import Path
-import torch
 
 # ==== Font Configuration ====
 # Kept for compatibility, though we are using English now.
@@ -32,7 +30,7 @@ for _fp in _preferred_fonts:
         pass
 
 plt.rcParams['axes.unicode_minus'] = False
-from typing import Dict, List, Tuple
+from typing import Collection, Dict, List, Tuple
 import argparse
 
 # 直接执行脚本时，Python 默认只搜索 utils 目录；补入项目根目录以加载 flcore。
@@ -42,11 +40,13 @@ if __package__ in (None, ""):
 
 from flcore.Env.multi_env import MultiBatteryCoordinator
 from flcore.train.train_common import (
-    default_presets, load_series_split, build_envs,
-    infer_dims, list_by_agents, flatten_obs, flatten_actions
+    default_presets, load_series_split, build_envs, infer_dims
 )
 from flcore.algorithm.IDDPG import IDDPG
-from flcore.algorithm.MADDPG import MADDPG
+from flcore.utils.dispatch_evaluation import (
+    FEDERATED_ALGORITHMS, HETEROGENEOUS_ALGORITHMS, STANDARD_ALGORITHMS,
+    evaluation_presets, load_actor_model, resolve_evaluation_run,
+)
 
 
 # ----------------------------
@@ -171,6 +171,12 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
         'soc', 'reward', 'co2_cost', 'terminal_storage_value']}
            for a in agents}
 
+    # 异构园区可能没有储能动作，此时首个动作控制的是其他设备。
+    storage_indices = {
+        aid: next((i for i, name in enumerate(env.envs[aid].action_names)
+                   if name in {"BES", "HES", "storage"}), None)
+        for aid in agents
+    }
     for h in range(hours):
         acts = model.select_actions(_by_agents(obs, agents), noise_scale=0.0)
         action_dict = {a: acts[i] for i, a in enumerate(agents)}
@@ -178,7 +184,9 @@ def rollout_one_day_per_agent(env: MultiBatteryCoordinator,
 
         for aid in agents:
             inf = info_dict[aid]
-            per[aid]['battery_action'][h] = float(action_dict[aid][0])
+            storage_index = storage_indices[aid]
+            if storage_index is not None:
+                per[aid]['battery_action'][h] = float(action_dict[aid][storage_index])
             per[aid]['soc'][h] = float(inf['soc'])
             per[aid]['P_el'][h] = float(inf.get('P_el', 0.0))
             per[aid]['P_fc_e'][h] = float(inf.get('P_fc_e', 0.0))
@@ -398,7 +406,7 @@ def _plot_thermal_balance(ax,
     components = [
         ('CHP Thermal Output', np.asarray(series.get('P_CHP_h', zeros), dtype=np.float32), H_COLORS['P_CHP_h']),
         ('Heat Pump Output', np.asarray(series.get('P_HB_h', zeros), dtype=np.float32), H_COLORS['P_HB_h']),
-        ('Fuel Cell Recovered Heat', np.asarray(series.get('P_fc_h', zeros), dtype=np.float32), H_COLORS['P_fc_h']),
+        ('HES Recovered Heat', np.asarray(series.get('P_fc_h', zeros), dtype=np.float32), H_COLORS['P_fc_h']),
         ('Heat Grid Purchase', np.asarray(series.get('h_grid_buy', zeros), dtype=np.float32), H_COLORS['h_grid_buy']),
     ]
 
@@ -468,7 +476,10 @@ def plot_daily_stack_per_agent(per: Dict[str, Dict[str, np.ndarray]],
 
 def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
                                     save_path: str = "daily_agents_grid.png",
-                                    title: str = "Diurnal Electrical Power Balance by IES (MW)") -> str:
+                                    title: str = "Diurnal Electrical Power Balance by IES (MW)",
+                                    *,
+                                    hes_agents: Collection[str] = ()) -> str:
+    """绘制各园区电功率平衡图并返回路径，在有 HES 但全天闲置的园区标注零功率。"""
     agent_ids = list(per.keys())
     n = len(agent_ids)
     import math
@@ -485,6 +496,8 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
         dd = per[aid]
         area_name = _agent_profile_name(aid, idx)
         panel_caption = f"({chr(97 + idx)}) {area_name} Electrical Power Balance"
+        if aid in hes_agents and not (np.any(dd.get('P_el', 0)) or np.any(dd.get('P_fc_e', 0))):
+            panel_caption += "\nHES electrical dispatch (0 MW)"
         handles, labels = _plot_electric_balance(ax, dd, demand_key='G_demand', panel_caption=panel_caption,
                                                  show_legend=False)
         if handles_sample is None:
@@ -510,7 +523,10 @@ def plot_daily_stack_per_agent_grid(per: Dict[str, Dict[str, np.ndarray]],
 
 def plot_daily_stack_per_agent_H_grid(per: Dict[str, Dict[str, np.ndarray]],
                                       save_path: str = "daily_agents_grid.png",
-                                      title: str = "Diurnal Thermal Power Balance by IES (MW)") -> str:
+                                      title: str = "Diurnal Thermal Power Balance by IES (MW)",
+                                      *,
+                                      hes_agents: Collection[str] = ()) -> str:
+    """绘制各园区热功率平衡图并返回路径，在有 HES 但全天无回收热量的园区标注零功率。"""
     agent_ids = list(per.keys())
     n = len(agent_ids)
     import math
@@ -527,6 +543,8 @@ def plot_daily_stack_per_agent_H_grid(per: Dict[str, Dict[str, np.ndarray]],
         dd = per[aid]
         area_name = _agent_profile_name(aid, idx)
         panel_caption = f"({chr(97 + idx)}) {area_name} Thermal Power Balance"
+        if aid in hes_agents and not np.any(dd.get('P_fc_h', 0)):
+            panel_caption += "\nHES recovered heat (0 MW)"
         handles, labels = _plot_thermal_balance(ax, dd, panel_caption=panel_caption, show_legend=False)
         if handles_sample is None:
             handles_sample, labels_sample = [], []
@@ -674,7 +692,7 @@ def select_evaluation_day(per: Dict[str, Dict[str, np.ndarray]],
 # ----------------------------
 def test_model_and_plot(algo: str = "iddpg",
                         Fed: bool = True,
-                        train: int = 1,
+                        train: int | None = None,
                         test: int = 0,
                         plot_day_offset: int | None = None,
                         gamma: float = 0.99,
@@ -682,24 +700,42 @@ def test_model_and_plot(algo: str = "iddpg",
                         batch_size: int = 256,
                         buffer_size: int = 200_000,
                         enable_env_mutation: bool = False,
-                        train_date: str = "2019-06-30",
+                        train_date: str | None = None,
                         run_dir: Path | None = None,
-                        algorithm: str = "DSFA") -> Tuple[
+                        algorithm: str | None = None,
+                        seed: int | None = None) -> Tuple[
     List[np.ndarray], List[np.ndarray], Dict[str, float]]:
     """在指定训练日期评估模型，保存英文图表与园区碳成本。
 
     train 应与训练命令的天数一致；test 固定为 0，且禁止环境平移。
     多日评估先完整运行策略以保持跨日储能状态，再仅展示指定日；
-    默认展示第三天，不足三天时展示第一天；run_dir 指向 4.2.1 批次。
+    默认展示第三天，不足三天时展示第一天。run_dir 支持 4.2.1 批次和异构实验，
+    日期和天数默认读取批次配置。异构批次含多个种子时通过 seed 选择。
     返回空训练奖励列表、展示日奖励列表及各园区展示日累计碳成本。
     """
-    if (algo, Fed, test, enable_env_mutation) != ("iddpg", True, 0, False) or train < 1:
-        raise ValueError("missing_DSFA 评估要求 iddpg、Fed=True、train>=1、test=0，且不启用环境平移")
-    presets = default_presets()
-    if run_dir is not None:
-        config = json.loads((run_dir / "config.json").read_text(encoding="utf-8"))
-        if config.get("train_date") != train_date or config.get("train_days") != train:
-            raise ValueError("评估日期或训练天数与 run_421.py 的实验配置不一致")
+    if (algo, Fed, test, enable_env_mutation) != ("iddpg", True, 0, False):
+        raise ValueError("评估要求 algo='iddpg'、Fed=True、test=0，且不启用环境平移")
+    if run_dir is None:
+        if seed is not None:
+            raise ValueError("--seed 需要同时指定 --run-dir")
+        train = 1 if train is None else train
+        train_date = "2019-06-30" if train_date is None else train_date
+        presets = default_presets()
+    else:
+        run_dir, config, algorithms = resolve_evaluation_run(run_dir, seed)
+        if ((train_date is not None and train_date != config["train_date"])
+                or (train is not None and train != config["train_days"])):
+            raise ValueError("评估日期或训练天数与实验配置不一致")
+        train_date, train = config["train_date"], config["train_days"]
+        algorithm = algorithms[-1] if algorithm is None else algorithm
+        if algorithm not in algorithms:
+            raise ValueError(f"该实验支持的算法：{', '.join(algorithms)}，收到：{algorithm}")
+        model_dir = run_dir / algorithm / "models"
+        presets, action_config = evaluation_presets(
+            model_dir, compact_actions=algorithms == HETEROGENEOUS_ALGORITHMS,
+        )
+    if train < 1:
+        raise ValueError("训练天数必须大于 0")
     park_configs = presets.env_kwargs["per_agent_kwargs"]
     if run_dir is None:
         park_configs["agent_1"]["chp_enabled"] = False
@@ -721,36 +757,24 @@ def test_model_and_plot(algo: str = "iddpg",
         raise ValueError(f"plot_day_offset 必须在 0 到 {available_days - 1} 之间")
 
     env, test_env = build_envs(train_series, test_series, presets.env_kwargs)
-    obs_dims, action_dims, max_actions, agents = infer_dims(env)
-
-    obs, _ = test_env.reset()
-
-    if run_dir is not None and algorithm not in ("IDDPG", "MADDPG", "FedAvg", "DSFA"):
-        raise ValueError(f"未知算法: {algorithm}")
-    if algo == "iddpg" and algorithm != "MADDPG":
-        model = IDDPG(
-            obs_dims, action_dims, max_actions,
-            lr_actor=1e-3, lr_critic=1e-3,
-            gamma=gamma, tau=tau,
-            batch_size=batch_size, buffer_size=buffer_size
-        )
-    else:
-        model = MADDPG(
-            obs_dims, action_dims, max_actions,
-            shared_obs_indices=[-2],
-            **presets.algo_kwargs
-        )
+    agents = env.agents
+    iddpg_kwargs = dict(lr_actor=1e-3, lr_critic=1e-3, gamma=gamma, tau=tau,
+                        batch_size=batch_size, buffer_size=buffer_size)
     if run_dir is None:
+        obs_dims, action_dims, max_actions, agents = infer_dims(env)
+        model = IDDPG(
+            obs_dims, action_dims, max_actions, **iddpg_kwargs
+        )
         model.load(prefix="missing_DSFA", Fed=True)
+        effective_fed = Fed
     else:
-        model_dir = run_dir / algorithm / "models"
-        fed = algorithm in ("DSFA", "FedAvg")
-        for index in range(len(agents)):
-            actor_path = model_dir / f"{fed}_actor_{index}.pth"
-            model.actors[index].load_state_dict(
-                torch.load(actor_path, map_location="cpu", weights_only=True)
-            )
-            model.actors[index].eval()
+        effective_fed = algorithm in FEDERATED_ALGORITHMS
+        model = load_actor_model(
+            model_dir, env, algorithm="MADDPG" if algorithm == "MADDPG" else "IDDPG",
+            federated=effective_fed,
+            algo_kwargs=presets.algo_kwargs if algorithm == "MADDPG" else iddpg_kwargs,
+            action_config=action_config,
+        )
 
     # 奖励、统计和图表共用同一条轨迹，避免反复 reset 导致结果口径不一致。
     dt_hours = float(presets.env_kwargs.get("dt_hours", 1.0))
@@ -775,12 +799,14 @@ def test_model_and_plot(algo: str = "iddpg",
 
     saved_files = plot_daily_stack_per_agent(per, save_dir=f"{savefile}", filename_prefix="daily_agent_")
 
-    effective_fed = Fed if run_dir is None else algorithm in ("DSFA", "FedAvg")
+    hes_agents = {aid for aid in agents if "HES" in test_env.envs[aid].action_names}
     G_grid_path = plot_daily_stack_per_agent_grid(per, save_path=f"{savefile}/daily_agents_Fed{effective_fed}.png",
-                                                  title=f"{train_date}: Diurnal Electrical Power Balance by IES (MW)")
+                                                  title=f"{train_date}: Diurnal Electrical Power Balance by IES (MW)",
+                                                  hes_agents=hes_agents)
 
     H_grid_path = plot_daily_stack_per_agent_H_grid(per, save_path=f"{savefile}/H_daily_agents_Fed{effective_fed}.png",
-                                                    title=f"{train_date}: Diurnal Thermal Power Balance by IES (MW)")
+                                                    title=f"{train_date}: Diurnal Thermal Power Balance by IES (MW)",
+                                                    hes_agents=hes_agents)
 
     print("Saved plot -> daily_supply_stack.png")
     print(f"Saved hydrogen data -> {hydrogen_csv}")
@@ -795,22 +821,25 @@ def test_model_and_plot(algo: str = "iddpg",
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="评估 DSFA 并绘制电池及氢储能运行图")
-    parser.add_argument('--train_days', type=int, default=1,
-                        help='与训练时 --train_days 保持一致；7 天对应连续 5 个工作日')
+    parser.add_argument('--train_days', '--train-days', type=int,
+                        help='评估天数，默认读取批次配置，未指定批次时为 1 天')
     parser.add_argument('--plot_day_offset', type=int, default=None,
                         help='展示第几个工作日，从 0 开始；多日评估默认 2（第三天）')
-    parser.add_argument('--train-date', default='2019-06-30',
-                        help='训练及评估的起始日期，默认 2019-06-30')
+    parser.add_argument('--train-date',
+                        help='评估起始日期，默认读取批次配置，未指定批次时为 2019-06-30')
     parser.add_argument('--run-dir', type=Path,
-                        help='run_421.py 生成的实验批次目录；指定后加载该批次模型')
-    parser.add_argument('--algorithm', choices=('IDDPG', 'MADDPG', 'FedAvg', 'DSFA'),
-                        default='DSFA', help='--run-dir 中要评估的算法，默认 DSFA')
+                        help='4.2.1 或异构实验批次目录，也可指定异构批次下的 seed_N 目录')
+    parser.add_argument('--seed', type=int, help='异构实验种子，批次只有一个种子时自动选择')
+    parser.add_argument('--algorithm',
+                        choices=tuple(dict.fromkeys(STANDARD_ALGORITHMS + HETEROGENEOUS_ALGORITHMS)),
+                        help='要评估的算法，默认使用相应批次的 DSFA 或 HeterogeneousDSFA')
     args = parser.parse_args()
     _, rewards, co2_costs = test_model_and_plot(train=args.train_days,
                                                 plot_day_offset=args.plot_day_offset,
                                                 train_date=args.train_date,
                                                 run_dir=args.run_dir,
-                                                algorithm=args.algorithm)
+                                                algorithm=args.algorithm,
+                                                seed=args.seed)
     print(f"Total Cumulative Reward: {sum(rewards)}")
     print("CO2 Emission Costs for each IES:")
     for idx, (agent, cost) in enumerate(co2_costs.items()):

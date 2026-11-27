@@ -6,19 +6,18 @@ import json
 import sys
 from pathlib import Path
 
-import torch
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from flcore.Env.multi_env import MultiBatteryCoordinator
-from flcore.algorithm.IDDPG import IDDPG
-from flcore.algorithm.MADDPG import MADDPG
-from flcore.train.train_common import default_presets, infer_dims, list_by_agents, load_series_split
+from flcore.train.train_common import default_presets, list_by_agents, load_series_split
+from flcore.utils.dispatch_evaluation import (
+    FEDERATED_ALGORITHMS, HETEROGENEOUS_ALGORITHMS, STANDARD_ALGORITHMS,
+    evaluation_presets, load_actor_model, resolve_evaluation_run,
+)
 
 
-ALGORITHMS = ("IDDPG", "MADDPG", "FedAvg", "DSFA")
 ROTATED_KEYS = ("G_L", "H_L", "R", "R_solar", "R_wind")
 
 
@@ -40,31 +39,24 @@ def rotate_environment(series: list[dict]) -> list[dict]:
     return rotated
 
 
-def load_model(model_dir: Path, algorithm: str, env: MultiBatteryCoordinator):
-    """按 run_421.py 的目录结构加载指定算法的 Actor 权重。
+def load_model(model_dir: Path, algorithm: str, env: MultiBatteryCoordinator, *,
+               action_config: dict[str, list[str]] | None = None):
+    """为轮转评估加载指定算法的 Actor 权重。
 
     Args:
         model_dir: 当前算法的 models 目录。
-        algorithm: IDDPG、MADDPG、FedAvg 或 DSFA。
+        algorithm: 批次中保存模型的算法名称。
         env: 使用原始设备配置建立的评估环境。
+        action_config: 异构模型保存的园区动作清单，旧模型可省略。
 
     Returns:
         可调用 select_actions 的模型，执行时不加入探索噪声。
     """
-    presets = default_presets()
-    obs_dims, action_dims, max_actions, agents = infer_dims(env)
-    if algorithm == "MADDPG":
-        model = MADDPG(obs_dims, action_dims, max_actions,
-                       shared_obs_indices=[-2], **presets.algo_kwargs)
-    else:
-        model = IDDPG(obs_dims, action_dims, max_actions, **presets.algo_kwargs)
-    fed = algorithm in ("FedAvg", "DSFA")
-    for index in range(len(agents)):
-        actor_path = model_dir / f"{fed}_actor_{index}.pth"
-        model.actors[index].load_state_dict(
-            torch.load(actor_path, map_location="cpu", weights_only=True))
-        model.actors[index].eval()
-    return model
+    return load_actor_model(
+        model_dir, env, algorithm="MADDPG" if algorithm == "MADDPG" else "IDDPG",
+        federated=algorithm in FEDERATED_ALGORITHMS, algo_kwargs=default_presets().algo_kwargs,
+        action_config=action_config,
+    )
 
 
 def evaluate_day(model, series: list[dict], env_kwargs: dict) -> dict:
@@ -93,7 +85,7 @@ def evaluate_day(model, series: list[dict], env_kwargs: dict) -> dict:
         env.close()
 
 
-def format_rotation_table(results: dict) -> str:
+def format_rotation_table(results: dict, algorithms: tuple[str, ...] = STANDARD_ALGORITHMS) -> str:
     """按论文表 2 的列顺序整理四个轮转园区、系统总值和增幅。"""
     header = (
         "| Algorithm | Agent 1 (Scene 2) | Agent 2 (Scene 3) | "
@@ -108,14 +100,14 @@ def format_rotation_table(results: dict) -> str:
     ):
         lines.extend([f"## {title}", "", header,
                       "| --- | ---: | ---: | ---: | ---: | ---: |"])
-        for algorithm in ALGORITHMS:
+        for algorithm in algorithms:
             record = results[algorithm]
             rotated = record["rotated"]
             parks = [f"{rotated[park_key][f'agent_{index}']:,.2f}"
                      for index in range(4)]
             change = record[change_key]
             change_text = "" if change is None else f" ({change:+.2f}%)"
-            label = "DSFA (Ours)" if algorithm == "DSFA" else algorithm
+            label = f"{algorithm} (Ours)" if algorithm == algorithms[-1] else algorithm
             lines.append(
                 f"| {label} | {' | '.join(parks)} | "
                 f"{rotated[system_key]:,.2f}{change_text} |"
@@ -124,15 +116,17 @@ def format_rotation_table(results: dict) -> str:
     return "\n".join(lines)
 
 
-def format_original_table(results: dict) -> str:
+def format_original_table(results: dict, algorithms: tuple[str, ...] = STANDARD_ALGORITHMS) -> str:
     """按论文原始环境表格的算法顺序输出总调度费用和碳税。"""
+    ours_label = f"{algorithms[-1]} (Ours)"
+    algorithm_width = max(15, len(ours_label))
     lines = ["Daily Scheduling Costs and Carbon Tax in the Original Environment (CNY)",
-             "Algorithm       Total Cost       Carbon Tax"]
-    for algorithm in ("DSFA", "IDDPG", "MADDPG", "FedAvg"):
+             f"{'Algorithm':<{algorithm_width}} {'Total Cost':>12} {'Carbon Tax':>16}"]
+    for algorithm in (algorithms[-1], *algorithms[:-1]):
         original = results[algorithm]["original"]
-        label = "DSFA (Ours)" if algorithm == "DSFA" else algorithm
+        label = ours_label if algorithm == algorithms[-1] else algorithm
         lines.append(
-            f"{label:<15} {original['system_cost_cny']:>12,.2f} "
+            f"{label:<{algorithm_width}} {original['system_cost_cny']:>12,.2f} "
             f"{original['system_carbon_cost_cny']:>16,.2f}"
         )
     return "\n".join(lines)
@@ -141,14 +135,14 @@ def format_original_table(results: dict) -> str:
 def main() -> None:
     """加载同批次四个训练模型，对原始日和数据轮转日分别评估并保存结果。"""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("run_dir", type=Path, help="run_421.py 生成的实验批次目录")
+    parser.add_argument("run_dir", type=Path,
+                        help="4.2.1 或异构实验批次目录，也可指定异构批次下的 seed_N 目录")
+    parser.add_argument("--seed", type=int, help="异构实验种子，批次只有一个种子时自动选择")
     parser.add_argument("--output", type=Path,
-                        help="结果目录，默认使用实验批次目录下的 environment_rotation")
+                        help="结果目录，默认使用模型所在批次或种子目录下的 environment_rotation")
     args = parser.parse_args()
-    output_dir = args.output or args.run_dir / "environment_rotation"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    config = json.loads((args.run_dir / "config.json").read_text(encoding="utf-8"))
+    run_dir, config, algorithms = resolve_evaluation_run(args.run_dir, args.seed)
+    output_dir = args.output or run_dir / "environment_rotation"
     if config["train_days"] != 1:
         raise ValueError("环境轮转测试目前只支持训练数据为一天的实验")
     # 读取训练配置中的日期，确保原始环境与轮转环境使用同一天。
@@ -162,13 +156,16 @@ def main() -> None:
     if len(train_indices) != 24:
         raise ValueError(f"训练首日应为 24 小时，实际为 {len(train_indices)}")
     rotated_series = rotate_environment(train_series)
-    presets = default_presets()
     results = {}
     rows = []
-    for algorithm in ALGORITHMS:
+    for algorithm in algorithms:
+        model_dir = run_dir / algorithm / "models"
+        presets, action_config = evaluation_presets(
+            model_dir, compact_actions=algorithms == HETEROGENEOUS_ALGORITHMS,
+        )
         reference_env = MultiBatteryCoordinator(train_series, **presets.env_kwargs)
         try:
-            model = load_model(args.run_dir / algorithm / "models", algorithm, reference_env)
+            model = load_model(model_dir, algorithm, reference_env, action_config=action_config)
         finally:
             reference_env.close()
         original = evaluate_day(model, train_series, presets.env_kwargs)
@@ -194,6 +191,7 @@ def main() -> None:
                             for agent, cost in values["park_costs_cny"].items()},
                          **{f"{agent}_carbon_cost_cny": cost
                             for agent, cost in values["park_carbon_costs_cny"].items()}})
+    output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "results.json").write_text(
         json.dumps({"rotation": "agent_0<-agent_1<-agent_2<-agent_3<-agent_0",
                     "rotated_keys": ROTATED_KEYS, "results": results},
@@ -202,9 +200,9 @@ def main() -> None:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
-    table = format_rotation_table(results)
+    table = format_rotation_table(results, algorithms)
     (output_dir / "table_2.md").write_text(table, encoding="utf-8")
-    original_table = format_original_table(results)
+    original_table = format_original_table(results, algorithms)
     (output_dir / "original_environment_table.txt").write_text(
         original_table + "\n", encoding="utf-8")
     print(original_table)

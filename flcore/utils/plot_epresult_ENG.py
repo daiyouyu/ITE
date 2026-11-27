@@ -9,14 +9,20 @@ from matplotlib.ticker import ScalarFormatter
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes, mark_inset
 
 
-ALGORITHMS = ("MADDPG", "DSFA", "IDDPG", "FedAvg")
+# ALGORITHMS = ("MADDPG", "DSFA", "IDDPG", "FedAvg")
+ALGORITHMS = ("MADDPG", "HeterogeneousDSFA", "IDDPG", "BackboneFedAvg")
+# LINE_STYLES = {
+#     "MADDPG": ("maddpg", "#1f77b4", "-"),
+#     "DSFA": ("OURS", "#ff7f0e", "--"),
+#     "IDDPG": ("iddpg", "#2ca02c", "-."),
+#     "FedAvg": ("FedAvg", "#d62728", ":"),
+# }
 LINE_STYLES = {
-    "MADDPG": ("maddpg", "#1f77b4", "-"),
-    "DSFA": ("OURS", "#ff7f0e", "--"),
-    "IDDPG": ("iddpg", "#2ca02c", "-."),
-    "FedAvg": ("FedAvg", "#d62728", ":"),
+    "MADDPG": ("MADDPG", "#1f77b4", "-"),
+    "HeterogeneousDSFA": ("DSFA", "#ff7f0e", "--"),
+    "IDDPG": ("IDDPG", "#2ca02c", "-."),
+    "BackboneFedAvg": ("FedAvg", "#d62728", ":"),
 }
-
 
 def load_daily_cost(run_dir: Path, algorithm: str) -> np.ndarray:
     """读取逐轮园区奖励，返回系统每日成本等价值（CNY）。

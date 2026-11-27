@@ -88,7 +88,7 @@ def default_presets(*, compact_actions: bool = False) -> Presets:
                         "eta_el": 0.70, "eta_fc_e": 0.50, "eta_fc_heat": 0.30,
                         "h2_soc_min": 0.10, "h2_soc_max": 0.90, "h2_soc_init": 0.10,
                         "h2_operating_cost_per_MWh": 5.0,
-                        "hydrogen_invalid_action_cost_per_MWh": 100.0,
+                        "hydrogen_invalid_action_cost_per_MWh": 400.0,
                         "CHP_a": 0.6, "CHP_b": 0.5, "CHP_c": 0.108,
                         "CHP_d": 229.2, "CHP_e": 171.9, "CHP_f": 75,
                         "boiler_a": 0.8, "boiler_b": 253, "boiler_c": 75,
