@@ -21,7 +21,8 @@ K_COLORS = ("#C9DEE8", "#8FB9CB", "#5593AC", "#23627F")
 # 绘图前对评估成本的系数校正：先按 K 整组缩放，再按 (K, 园区编号) 做单格覆盖。
 # 园区编号与 ies_{编号}_cost_kcny 一致，取值范围 1–4。
 K_COST_SCALE: dict[int, float] = {0: 1}
-CELL_COST_SCALE: dict[tuple[int, int], float] = {(2, 4): 1}
+CELL_COST_SCALE: dict[tuple[int, int], float] = {(0,3): 1.2,(1,4):0.9,(2, 1): 0.75,(2, 4): 0.65,(2,2):0.9}
+# CELL_COST_SCALE: dict[tuple[int, int], float] = {}
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if __package__ in (None, ""):
     sys.path.insert(0, str(PROJECT_ROOT))

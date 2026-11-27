@@ -115,6 +115,10 @@ class Critic(nn.Module):
             nn.Linear(256, 1)
         )
 
+    def tail_parameters(self) -> tuple[nn.Parameter, ...]:
+        """返回输入投影层之后的参数，供不同输入维度的 Critic 共享。"""
+        return tuple(self.net[1:].parameters())
+
     def forward(self, all_obs, all_actions):
         x = torch.cat([all_obs, all_actions], dim=1)
         return self.net(x)

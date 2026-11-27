@@ -250,11 +250,12 @@ def train_iddpg(
         普通训练返回奖励与测试奖励；断联正常阶段返回内存状态字节串，
         断联阶段返回逐 episode 奖励数组。
     """
-    if compact_actions and (lost_contact or (Federated and fed_method not in ('DSFA', 'FedAvg'))):
-        raise ValueError('异构动作训练支持独立训练、DSFA 和 FedAvg')
+    uses_action_matching = Federated and fed_method in ('DSFA', 'AllDSFA')
+    if compact_actions and (lost_contact or (Federated and fed_method not in ('DSFA', 'AllDSFA', 'FedAvg'))):
+        raise ValueError('异构动作训练支持独立训练、DSFA、AllDSFA 和 FedAvg')
     if communication is not None:
-        if lost_contact or not Federated or fed_method != 'DSFA':
-            raise ValueError('选择性通信入口仅支持普通 DSFA；断联可通过聚合接口的 online_agents 测试')
+        if lost_contact or not uses_action_matching or (fed_method == 'AllDSFA' and not compact_actions):
+            raise ValueError('选择性通信支持 DSFA 和异构动作模式的 AllDSFA')
         from flcore.algorithm.selective_communication import select_neighbors
         select_neighbors(np.zeros(0), [], communication['strategy'],
                          communication['neighbors'], np.random.default_rng(communication['seed']))
@@ -416,7 +417,7 @@ def train_iddpg(
             update_step = total_steps
             # Update networks
             if update_step > 0 and update_step % 3 == 0:
-                iddpg.update(record_descriptors=not compact_actions or (Federated and fed_method == 'DSFA'))
+                iddpg.update(record_descriptors=not compact_actions or uses_action_matching)
 
             # --- Federated Aggregation Step ---
             # I_fed is 24, as in your original code
@@ -468,7 +469,7 @@ def train_iddpg(
                      episodes=np.asarray(federation_weight_episodes, dtype=int),
                      weights=np.asarray(federation_weights_history).reshape(-1, len(agents), len(agents)))
             save_action_config(run_dir, env)
-            if Federated and fed_method == 'DSFA':
+            if uses_action_matching:
                 (run_dir / 'communication.json').write_text(
                     json.dumps({'config': communication,
                                 'rounds': getattr(iddpg, 'communication_records', [])}),

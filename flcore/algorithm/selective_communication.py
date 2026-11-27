@@ -43,14 +43,15 @@ def select_neighbors(
 
 def aggregate_selected(
     model, online_agents: list[int] | None = None, *, strategy: str = 'nearest',
-    neighbors: int = 1, seed: int = 0,
+    neighbors: int = 1, seed: int = 0, aggregate_critic_tail: bool = False,
 ) -> np.ndarray | None:
     """执行一次两阶段 DSFA，返回完整权重矩阵，历史不足则返回 None。
 
     使用本地历史动作均值到候选当前动作的距离。命名动作只比较共同项，
     以 RMSE 作为距离。自身始终参与，缺少共同动作的邻居不进入候选集。
     离线园区不收发。按有向单播累计 float32 摘要、int64 版本号、
-    两个 int64 请求字段及 Actor 参数字节，不包含网络协议头和重传。
+    两个 int64 请求字段及模型参数字节，不包含网络协议头和重传。
+    aggregate_critic_tail 启用时，Critic 尾部使用与 Actor 相同的邻居和权重。
     通信记录保存在 model.communication_records；本函数不建立真实连接。
     """
     online = list(range(model.n_agents)) if online_agents is None else list(online_agents)
@@ -111,21 +112,29 @@ def aggregate_selected(
 
         # 第二阶段仅请求选中模型。先生成所有接收方更新，再统一提交，
         # 保证每次传输的都是本轮聚合前参数，避免原地更新污染后续接收方。
-        updates = {}
+        updates = []
         actor_bytes = 0
+        critic_bytes = 0
         for i in online:
             sources = [i, *np.flatnonzero(selected[i]).tolist()]
             if len(sources) == 1:
                 continue
-            parameters = [model.actor_aggregation_parameters(j) for j in sources]
-            updates[i] = [sum(weights[i, j] * parameters[pos][k].detach()
-                              for pos, j in enumerate(sources))
-                          for k in range(len(parameters[0]))]
-            for peer_parameters in parameters[1:]:
-                actor_bytes += sum(p.numel() * p.element_size() for p in peer_parameters)
-        for i, values in updates.items():
-            for parameter, value in zip(model.actor_aggregation_parameters(i), values):
-                parameter.copy_(value)
+            actor_parameters = [model.actor_aggregation_parameters(j) for j in sources]
+            actor_bytes += sum(p.numel() * p.element_size()
+                               for peer in actor_parameters[1:] for p in peer)
+            parameters = actor_parameters
+            if aggregate_critic_tail:
+                critic_parameters = [model.critics[j].tail_parameters() for j in sources]
+                critic_bytes += sum(p.numel() * p.element_size()
+                                    for peer in critic_parameters[1:] for p in peer)
+                # 合并参数序列，让同一轮的 Actor 主干和 Critic 尾部复用权重及聚合前快照。
+                parameters = [actor + critic for actor, critic in zip(actor_parameters, critic_parameters)]
+            for column in zip(*parameters, strict=True):
+                value = sum(weights[i, j] * parameter.detach()
+                            for j, parameter in zip(sources, column))
+                updates.append((column[0], value))
+        for parameter, value in updates:
+            parameter.copy_(value)
 
     # 异构模式的名称和顺序由实验配置预先共享，每轮只发送值和版本。
     descriptor_bytes = (len(online) - 1) * sum(
@@ -138,8 +147,8 @@ def aggregate_selected(
         'round': round_id, 'strategy': strategy, 'neighbors': neighbors,
         'online': online, 'selected': selected.tolist(), 'weights': weights.tolist(),
         'descriptor_bytes': descriptor_bytes, 'request_bytes': request_bytes,
-        'actor_bytes': actor_bytes,
-        'total_bytes': descriptor_bytes + request_bytes + actor_bytes,
+        'actor_bytes': actor_bytes, 'critic_bytes': critic_bytes,
+        'total_bytes': descriptor_bytes + request_bytes + actor_bytes + critic_bytes,
     })
     for i in online:
         model.proto_history[i].clear()

@@ -217,16 +217,16 @@ class IDDPG:
         Returns:
             成功时返回 n_agents × n_agents 权重矩阵；历史不足时返回 None。
         """
-        if self.match_indices is not None:
-            if method == 'AllDSFA':
-                raise ValueError("异构动作模式的 Critic 仅支持本地训练")
-            if method == 'DSFA' and communication is None:
-                communication = dict(strategy='all', neighbors=max(0, self.n_agents - 1))
+        heterogeneous_all_dsfa = self.match_indices is not None and method == 'AllDSFA'
+        if self.match_indices is not None and method in ('DSFA', 'AllDSFA') and communication is None:
+            communication = dict(strategy='all', neighbors=max(0, self.n_agents - 1))
         if communication is not None:
-            if method != 'DSFA':
-                raise ValueError("两阶段通信仅支持 DSFA")
+            if method != 'DSFA' and not heterogeneous_all_dsfa:
+                raise ValueError("两阶段通信支持 DSFA 和异构动作模式的 AllDSFA")
             from flcore.algorithm.selective_communication import aggregate_selected
-            return aggregate_selected(self, online_agents, **communication)
+            return aggregate_selected(
+                self, online_agents, aggregate_critic_tail=heterogeneous_all_dsfa, **communication
+            )
         online = list(range(self.n_agents)) if online_agents is None else list(online_agents)
         if len(set(online)) != len(online) or any(i < 0 or i >= self.n_agents for i in online):
             raise ValueError("online_agents 包含无效或重复的园区索引")

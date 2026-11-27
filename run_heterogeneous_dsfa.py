@@ -1,4 +1,4 @@
-"""在同一套异构园区上对照 IDDPG、MADDPG、主干等权聚合和 DSFA。"""
+"""在同一套异构园区上对照 IDDPG、MADDPG、主干等权聚合、DSFA 和 AllDSFA。"""
 
 import argparse
 import csv
@@ -28,7 +28,7 @@ def read_completed_rewards(directory: Path, epochs: int, federated: bool):
 
 
 def run_experiment(args: argparse.Namespace, output: Path) -> None:
-    """对每个种子训练四组模型，在留出日评估，并保存模型、日志和汇总指标。"""
+    """对每个种子训练五组模型，在留出日评估，并保存模型、日志和汇总指标。"""
     import numpy as np
     import torch
 
@@ -42,6 +42,7 @@ def run_experiment(args: argparse.Namespace, output: Path) -> None:
         ("MADDPG", False, None),
         ("BackboneFedAvg", True, "FedAvg"),
         ("HeterogeneousDSFA", True, "DSFA"),
+        ("AllDSFA", True, "AllDSFA"),
     )
     rows = []
     for seed in dict.fromkeys(args.seeds):
@@ -59,7 +60,7 @@ def run_experiment(args: argparse.Namespace, output: Path) -> None:
             else:
                 directory.mkdir(parents=True)
                 communication = None
-                if name == "HeterogeneousDSFA":
+                if federated and method in ("DSFA", "AllDSFA"):
                     communication = dict(strategy="nearest", neighbors=args.neighbors, seed=seed)
                 with (directory / "training.log").open("w", encoding="utf-8") as log, redirect_stdout(log):
                     if name == "MADDPG":
@@ -109,9 +110,9 @@ def main() -> None:
     parser.add_argument("--train-days", type=int, default=1, help="连续训练数据天数")
     parser.add_argument("--train-date", default="2019-06-30", help="训练起始日期 YYYY-MM-DD")
     parser.add_argument("--eval-date", default="2019-07-01", help="留出评估日期 YYYY-MM-DD")
-    parser.add_argument("--seeds", nargs="+", type=int, default=[0], help="四组共用的随机种子")
+    parser.add_argument("--seeds", nargs="+", type=int, default=[0], help="五组共用的随机种子")
     parser.add_argument("--neighbors", type=int, choices=range(4), default=3,
-                        help="DSFA 最多选择的邻居数，不含自身")
+                        help="DSFA 和 AllDSFA 最多选择的邻居数，不含自身")
     parser.add_argument("--output-root", type=Path, default=Path("result/heterogeneous_dsfa"))
     parser.add_argument("--resume", type=Path, metavar="批次目录",
                         help="读取批次原有配置，复用已保存的模型并继续训练尚未开始的组")
