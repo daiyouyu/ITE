@@ -1,0 +1,17 @@
+{
+  "strategy": [
+    "nearest"
+  ],
+  "neighbors": [
+    0,
+    1,
+    2,
+    3
+  ],
+  "seed": 0,
+  "seeds": null,
+  "epochs": 8000,
+  "train_days": 1,
+  "train_date": "2019-01-01",
+  "workers": 4
+}
